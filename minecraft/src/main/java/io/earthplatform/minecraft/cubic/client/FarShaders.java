@@ -901,6 +901,12 @@ final class FarShaders {
     static String packFragment(String version, String patch, boolean ownDepth, int fade) { return packFragment(version, patch, ownDepth, fade, false); }
 
     private static final Pattern LEGACY_TEXTURE = Pattern.compile("\\btexture2D(?=\\s*\\()");
+    private static final Pattern PACK_TEXTURE_2D = Pattern.compile(
+            "(?m)^\\h*#\\h*define\\h+texture2D\\b|\\btexture2D\\s*\\([^()]*\\)\\s*\\{");
+    private static final Pattern LIGHTMAP_SAMPLE = Pattern.compile(
+            "\\b(?:texture(?:2D)?(?:Proj)?(?:Lod|Grad|Gather)?(?:Offset|Offsets)?|textureSize|texelFetch(?:Offset)?)\\s*\\(\\s*lightmap\\s*,");
+    private static final Pattern PACK_LIGHTMAP = Pattern.compile(
+            "(?m)^\\h*#\\h*define\\h+lightmap\\b|\\b(?:[biud]?vec[234]|[iu]?sampler\\w*|float|double|int|uint|bool)\\s+lightmap\\b");
 
     /** The same, drawing only where the game drew none of its blocks with {@code ground} (see {@link #GROUND}). */
     static String packFragment(String version, String patch, boolean ownDepth, int fade, boolean ground) {
@@ -911,11 +917,13 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        if (version.contains(" core")) patched = LEGACY_TEXTURE.matcher(patched).replaceAll("texture");
         String code = COMMENTS.matcher(patched).replaceAll(" ");
+        if (version.contains(" core") && !PACK_TEXTURE_2D.matcher(code).find()) {
+            patched = LEGACY_TEXTURE.matcher(patched).replaceAll("texture");
+        }
         // Some packs use the block lightmap without listing it in voxy.json. FarGpu supplies it
         // on its own lightmap unit. A sampler already declared by the pack keeps its Iris binding.
-        String lightmap = reads(code, "lightmap") && !declares(code, "lightmap")
+        String lightmap = LIGHTMAP_SAMPLE.matcher(code).find() && !PACK_LIGHTMAP.matcher(code).find() && !declares(code, "lightmap")
                 ? "uniform sampler2D earth_Lightmap;\n#define lightmap earth_Lightmap\n" : "";
         return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + (ground ? GROUND : "") + fade(fade)
                 + VOXY_PARAMETERS + lightmap + patched + (lightmap.isEmpty() ? "" : "#undef lightmap\n")

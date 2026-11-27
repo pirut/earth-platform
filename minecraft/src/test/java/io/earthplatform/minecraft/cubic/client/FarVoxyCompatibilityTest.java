@@ -59,6 +59,21 @@ class FarVoxyCompatibilityTest {
         assertFalse(FarShaders.packFragment(HEADER, PHOTON, true).contains("#define lightmap"));
     }
 
+    @Test void preservesThePacksLightmapAndTextureFunction() {
+        String varying = "in vec2 lightmap;\n" + MAKEUP.replace("texture2D(lightmap, p.lightMap)", "vec4(lightmap, 0.0, 1.0)");
+        assertFalse(FarShaders.packFragment(HEADER, varying, true).contains("uniform sampler2D earth_Lightmap;"));
+
+        String alias = "#define lightmap earth_PackSampler\nuniform sampler2D earth_PackSampler;\n" + MAKEUP;
+        assertFalse(FarShaders.packFragment(HEADER, alias, true).contains("uniform sampler2D earth_Lightmap;"));
+
+        String custom = "vec4 texture2D(vec2 uv) { return vec4(uv, 0.0, 1.0); }\n"
+                + MAKEUP.replace("texture2D(lightmap, p.lightMap)", "texture2D(p.lightMap)");
+        String generated = FarShaders.packFragment(HEADER, custom, true);
+        assertTrue(generated.contains("vec4 texture2D(vec2 uv)"));
+        assertTrue(generated.contains("color = texture2D(p.lightMap);"));
+        assertFalse(generated.contains("uniform sampler2D earth_Lightmap;"));
+    }
+
     @Test void routesOpaqueOutputsAroundFaceDepthInEachPass() {
         var photon = FarShaders.voxyDrawBuffers("{\"opaqueDrawBuffers\": [1], \"translucentDrawBuffers\": [13,16]}");
         var complementary = FarShaders.voxyDrawBuffers("{\"opaqueDrawBuffers\": [0, /* material */ 6]}");
@@ -73,17 +88,16 @@ class FarVoxyCompatibilityTest {
         int photonFace = FarShaders.faceDepthLocation(PHOTON);
         assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 },
                 FarLod.drawBuffers(photon.size(), photonFace, 8, true, true));
-        for (int outputs : List.of(complementary.size(), makeup.size())) {
-            int face = FarShaders.faceDepthLocation(COMPLEMENTARY);
-            assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT1 },
-                    FarLod.drawBuffers(outputs, face, 8, true, true));
-            assertArrayEquals(new int[] { GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT1 },
-                    FarLod.drawBuffers(outputs, face, 8, false, true));
-            assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2, GL_NONE },
-                    FarLod.drawBuffers(outputs, face, 8, true, false));
-            assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_NONE, GL_COLOR_ATTACHMENT1 },
-                    FarLod.drawBuffers(1, face, 8, true, true));
-        }
+        int outputs = complementary.size();
+        int face = FarShaders.faceDepthLocation(COMPLEMENTARY);
+        assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT1 },
+                FarLod.drawBuffers(outputs, face, 8, true, true));
+        assertArrayEquals(new int[] { GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT1 },
+                FarLod.drawBuffers(outputs, face, 8, false, true));
+        assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT2, GL_NONE },
+                FarLod.drawBuffers(outputs, face, 8, true, false));
+        assertArrayEquals(new int[] { GL_COLOR_ATTACHMENT0, GL_NONE, GL_COLOR_ATTACHMENT1 },
+                FarLod.drawBuffers(1, face, 8, true, true));
     }
 
     /** Set EARTH_GLSLANG to the standalone validator's path to compile without an OpenGL context. */

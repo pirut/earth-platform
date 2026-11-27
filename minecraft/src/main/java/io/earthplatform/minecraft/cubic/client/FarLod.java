@@ -238,8 +238,9 @@ public final class FarLod {
             dhBlend = GL11C.glIsEnabled(GL11C.GL_BLEND);
             GL11C.glDisable(GL11C.GL_BLEND);
         } else if (voxyBuffers.size() > 1 && faceLocation >= voxyBuffers.size()
-                && faceLocation < maxDrawBuffers() && voxyBuffers.size() < GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS)) {
-            packTargets = FarLodIris.voxyTargets(voxyBuffers, width, height);
+                && faceLocation < maxDrawBuffers() && voxyBuffers.size() < maxColorAttachments()) {
+            int[] textures = FarLodIris.voxyTargets(voxyBuffers, width, height);
+            if (textures != null && textures[0] == colour) packTargets = textures;
         }
         if (packTargets == null) {
             GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
@@ -294,7 +295,7 @@ public final class FarLod {
     static int width() { return width; }
     static int height() { return height; }
 
-    private static int maxDrawBuffers, faceLocation;
+    private static int maxDrawBuffers, maxColorAttachments, faceLocation;
     /** Color textures for the pack's fragment outputs on this draw, or null for the original first target. */
     @Nullable private static int[] packTargets;
     private static boolean dhDraw, dhBlend;
@@ -309,12 +310,17 @@ public final class FarLod {
         return maxDrawBuffers;
     }
 
+    private static int maxColorAttachments() {
+        if (maxColorAttachments == 0) maxColorAttachments = GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS);
+        return maxColorAttachments;
+    }
+
     /**
      * Whether a pack's Distant Horizons program with this many outputs can be drawn: each needs a
      * draw buffer and an attachment, and far terrain's faces' depth one more of each.
      */
     static boolean dhFits(int outputs) {
-        return outputs + 1 <= Math.min(GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS), GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS));
+        return outputs + 1 <= Math.min(maxDrawBuffers(), maxColorAttachments());
     }
 
     private static int[] targets(boolean colour, boolean faces) {
