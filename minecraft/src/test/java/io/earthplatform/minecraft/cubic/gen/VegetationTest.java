@@ -26,6 +26,7 @@ import net.minecraft.world.level.levelgen.feature.trunkplacers.TrunkPlacer;
 import net.minecraft.world.level.levelgen.feature.trunkplacers.TrunkPlacerType;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -57,6 +58,58 @@ class VegetationTest {
 
         assertFalse(section.getBlockState(6, 1, 0).is(Blocks.CACTUS));
         assertTrue(section.getBlockState(8, 1, 0).is(Blocks.CACTUS));
+    }
+
+    /** Decorates a 16x16 field of {@code surface}, returning the plants on the first row's ground and whether any cactus grew. */
+    private static int[] plantsOn(SurfaceGenerator.Surface surface) {
+        var biomes = SurfacePacketFixtures.biomes();
+        var generator = new SurfaceGenerator(0, biomes, RandomSource.create(0)) {
+            @Override protected boolean cacti(int x, int z) { return true; }
+            @Override protected void ground(int x, int z, int[] out) { out[0] = 0; out[1] = DRY; }
+            @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return surface; }
+            @Override public String id() { return "test_scrub"; }
+            @Override public int seaLevel() { return 0; }
+            @Override protected int shoreLevel() { return 0; }
+            @Override protected boolean emeralds(int maxGround) { return false; }
+        };
+        int[] height = new int[18 * 18], water = new int[18 * 18];
+        Arrays.fill(water, SurfaceGenerator.DRY);
+        var field = new SurfaceGenerator.Surface[16 * 16];
+        Arrays.fill(field, surface);
+        var section = new LevelChunkSection(biomes);
+        new Vegetation(generator).decorate(section, 0, 0, 0, height, water, field);
+        int bushes = 0, grass = 0, cacti = 0;
+        for (int x = 0; x < 16; x++) for (int z = 0; z < 16; z++) {
+            var state = section.getBlockState(x, 1, z);
+            if (state.is(Blocks.DEAD_BUSH)) bushes++;
+            else if (state.is(Blocks.SHORT_GRASS)) grass++;
+            else if (state.is(Blocks.CACTUS)) cacti++;
+        }
+        return new int[]{bushes, grass, cacti};
+    }
+
+    @Test void aridCoarseDirtColumnsKeepDryScrubWhenCoarseDirtIsOff() {
+        var biomes = SurfacePacketFixtures.biomes();
+        var desert = biomes.getHolderOrThrow(Biomes.DESERT);
+        var dirt = Blocks.DIRT.defaultBlockState();
+        var coarse = new SurfaceGenerator.Surface(desert, Blocks.COARSE_DIRT.defaultBlockState(), dirt, 0, 0, 0, 900, 900, false);
+        var converted = new SurfaceGenerator.Surface(desert, dirt, dirt, 0, 0, 0, 900, 900, false, SurfaceGenerator.Tree.OAK, true);
+        var plain = new SurfaceGenerator.Surface(desert, dirt, dirt, 0, 0, 0, 900, 900, false);
+        int[] was = plantsOn(coarse), now = plantsOn(converted);
+        assertTrue(was[0] > 0 && was[1] > 0, "coarse dirt grows dead bushes and short grass: " + Arrays.toString(was));
+        assertArrayEquals(was, now, "turning coarse dirt off keeps the same scrub");
+        assertEquals(0, plantsOn(plain)[0] + plantsOn(plain)[1], "plain dirt that was never coarse grows none");
+    }
+
+    @Test void coarseDirtOverSandstoneGrowsNoCactusWhenCoarseDirtIsOff() {
+        var desert = SurfacePacketFixtures.biomes().getHolderOrThrow(Biomes.DESERT);
+        var dirt = Blocks.DIRT.defaultBlockState();
+        var sandstone = Blocks.SANDSTONE.defaultBlockState();
+        var coarse = new SurfaceGenerator.Surface(desert, Blocks.COARSE_DIRT.defaultBlockState(), sandstone, 0, 0, 0, 100, 1000, false);
+        var converted = new SurfaceGenerator.Surface(desert, dirt, sandstone, 0, 0, 0, 100, 1000, false, SurfaceGenerator.Tree.OAK, true);
+        assertEquals(0, plantsOn(coarse)[2]);
+        assertEquals(0, plantsOn(converted)[2], "no cactus where coarse dirt used to sit");
+        assertArrayEquals(plantsOn(coarse), plantsOn(converted));
     }
 
     @Test void earthForestsExcludeHugeMushrooms() {

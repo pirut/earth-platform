@@ -4416,13 +4416,13 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /**
      * What a surface becomes in a world pinned without coarse dirt: grass where the ground under it is soil in a
-     * wet enough land, plain dirt in dry scrub and on loose cinder and wash, sand where sandstone lies beneath.
-     * Every other surface, and every surface in a world that keeps coarse dirt, is returned as it was.
+     * wet enough land, plain dirt in dry scrub and on loose cinder and wash, and plain dirt (never sand, which would
+     * grow cacti) where sandstone lies beneath. Dry ground keeps its scrub plants through {@link Surface#scrub}. Every other surface, and every surface in a world that keeps coarse dirt, is returned as it was.
      */
     Surface withoutCoarseDirt(Surface s) {
         if (coarseDirt() || s.top() != COARSE_DIRT) return s;
-        BlockState top = s.under() == SANDSTONE ? SAND : s.under() == DIRT && !ModdedBiomes.isArid(s.biome()) ? GRASS : DIRT;
-        return new Surface(s.biome(), top, s.under(), s.trees(), s.spruce(), s.birch(), s.grass(), s.flowers(), s.ferns(), s.broadleaf());
+        boolean grass = s.under() == DIRT && !ModdedBiomes.isArid(s.biome());
+        return new Surface(s.biome(), grass ? GRASS : DIRT, s.under(), s.trees(), s.spruce(), s.birch(), s.grass(), s.flowers(), s.ferns(), s.broadleaf(), !grass);
     }
 
     /** Imagery ground rules for this world's grid and seed, reading from any imagery source; for {@link ImageryCalibration}. */

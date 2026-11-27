@@ -218,13 +218,16 @@ public final class CubicSettings {
         if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
         if (!"false".equals(System.getProperty("earthplatform.earth.forests"))) properties.setProperty("earth.forests", ForestTypes.ID);
         // Pinned only when off, so a world made without the setting, or with it on, has no such line and keeps coarse dirt.
-        if (!coarseDirtOn()) properties.setProperty("earth.coarseDirt", "false");
+        pinCoarseDirt(properties, coarseDirtOn());
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
 
     /** Whether new worlds get coarse dirt: they do unless {@code -Dearthplatform.earth.coarseDirt=false} (or its setting) says not. */
     private static boolean coarseDirtOn() { return !"false".equals(System.getProperty("earthplatform.earth.coarseDirt")); }
+
+    /** Writes the coarse dirt pin: only when it is off, so a world made with it on has no such line and keeps coarse dirt. */
+    static void pinCoarseDirt(Properties properties, boolean on) { if (!on) properties.setProperty("earth.coarseDirt", "false"); }
 
     /** Whether a world's pinned settings keep coarse dirt: they do unless {@code earth.coarseDirt} is {@code false}. */
     static boolean coarseDirt(Properties properties) { return !"false".equals(properties.getProperty("earth.coarseDirt")); }

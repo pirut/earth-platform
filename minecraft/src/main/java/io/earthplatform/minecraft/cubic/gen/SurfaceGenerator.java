@@ -60,12 +60,16 @@ public abstract class SurfaceGenerator implements CubeGenerator {
      * is spruce for a roll under {@code spruce} tenths, then birch for the next {@code birch}
      * tenths, else {@code broadleaf}. Plants: a roll in thousandths under {@code grass} gives grass
      * (or a fern when {@code ferns}), else under {@code flowers} a flower; on sand they are dead
-     * bushes and cacti.
+     * bushes and cacti. {@code scrub} marks bare dirt that was coarse dirt in a world made without it, so
+     * dry-scrub plants still grow there as they would have on coarse dirt.
      */
     public record Surface(Holder<Biome> biome, BlockState top, BlockState under, int trees, int spruce, int birch,
-                          int grass, int flowers, boolean ferns, Tree broadleaf) {
+                          int grass, int flowers, boolean ferns, Tree broadleaf, boolean scrub) {
         public Surface(Holder<Biome> biome, BlockState top, BlockState under, int trees, int spruce, int birch, int grass, int flowers, boolean ferns) {
-            this(biome, top, under, trees, spruce, birch, grass, flowers, ferns, Tree.OAK);
+            this(biome, top, under, trees, spruce, birch, grass, flowers, ferns, Tree.OAK, false);
+        }
+        public Surface(Holder<Biome> biome, BlockState top, BlockState under, int trees, int spruce, int birch, int grass, int flowers, boolean ferns, Tree broadleaf) {
+            this(biome, top, under, trees, spruce, birch, grass, flowers, ferns, broadleaf, false);
         }
         public Tree tree(int roll) { return roll < spruce ? Tree.SPRUCE : roll < spruce + birch ? Tree.BIRCH : broadleaf; }
     }

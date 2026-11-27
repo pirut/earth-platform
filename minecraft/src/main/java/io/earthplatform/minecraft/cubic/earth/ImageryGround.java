@@ -105,8 +105,11 @@ final class ImageryGround {
             GroundPalette.Ground[] set = top == COARSE_DIRT && vegetatedCover && !desert ? GroundPalette.LOAM
                     : rock ? (arid ? GroundPalette.DESERT_ROCK : GroundPalette.ROCK) : arid ? GroundPalette.DESERT_LOOSE : GroundPalette.LOOSE;
             BlockState matched = BLOCKS[GroundPalette.match(reading, set, roll).ordinal()];
-            if (matched == COARSE_DIRT && !coarseDirt) matched = DIRT;
-            return matched == top ? surface : with(surface, matched, surface.trees(), surface.grass(), surface.flowers());
+            boolean swapped = matched == COARSE_DIRT && !coarseDirt;
+            if (swapped) matched = DIRT;
+            if (swapped && top == COARSE_DIRT) return plainDirt(surface);
+            return matched == top ? surface : swapped ? withScrub(surface, matched, surface.trees(), surface.grass(), surface.flowers())
+                    : with(surface, matched, surface.trees(), surface.grass(), surface.flowers());
         }
         double vegetation = reading.vegetation();
         if (wooded) {
@@ -121,7 +124,9 @@ final class ImageryGround {
         if (vegetation < 0.25 && reading.lightness() > 42 && !reading.grey() && roll > vegetation * 3) {
             GroundPalette.Ground[] set = desert ? GroundPalette.SOIL : GroundPalette.LOAM;
             BlockState soil = BLOCKS[GroundPalette.match(reading, set, roll).ordinal()];
-            if (soil == COARSE_DIRT && !coarseDirt) soil = DIRT;
+            boolean swapped = soil == COARSE_DIRT && !coarseDirt;
+            if (swapped) soil = DIRT;
+            if (swapped) return desert ? withScrub(surface, soil, 0, 0, 0) : withScrub(surface, soil, surface.trees(), surface.grass() / 2, 0);
             return desert ? with(surface, soil, 0, 0, 0) : with(surface, soil, surface.trees(), surface.grass() / 2, 0);
         }
         return surface;
@@ -156,6 +161,16 @@ final class ImageryGround {
 
     private static Surface with(Surface s, BlockState top, int trees, int grass, int flowers) {
         return new Surface(s.biome(), top, under(top, s.under()), trees, s.spruce(), s.birch(), grass, flowers, s.ferns(), s.broadleaf());
+    }
+
+    /** Dirt standing where imagery chose coarse dirt: dry-scrub plants still grow on it. */
+    private static Surface withScrub(Surface s, BlockState top, int trees, int grass, int flowers) {
+        return new Surface(s.biome(), top, under(top, s.under()), trees, s.spruce(), s.birch(), grass, flowers, s.ferns(), s.broadleaf(), true);
+    }
+
+    /** A coarse-dirt surface imagery matched, as plain dirt on top of whatever lay beneath (basalt stays basalt). */
+    private static Surface plainDirt(Surface s) {
+        return new Surface(s.biome(), DIRT, s.under(), s.trees(), s.spruce(), s.birch(), s.grass(), s.flowers(), s.ferns(), s.broadleaf(), true);
     }
 
     /** The blocks under a top: sandstone under sand, dirt under soils, terracotta under terracotta, else what was there. */

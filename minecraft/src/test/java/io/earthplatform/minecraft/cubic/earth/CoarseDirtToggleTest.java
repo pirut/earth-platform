@@ -127,7 +127,29 @@ class CoarseDirtToggleTest {
         Surface sandy = new Surface(desert, COARSE, Blocks.SANDSTONE.defaultBlockState(), 0, 0, 0, 25, 25, false);
         assertEquals(DIRT, off.withoutCoarseDirt(dry).top());
         assertEquals(GRASS, off.withoutCoarseDirt(wet).top());
-        assertEquals(Blocks.SAND.defaultBlockState(), off.withoutCoarseDirt(sandy).top());
+        Surface plainSandy = off.withoutCoarseDirt(sandy);
+        assertEquals(DIRT, plainSandy.top(), "never sand, which would grow cacti where coarse dirt sat");
+        assertEquals(Blocks.SANDSTONE.defaultBlockState(), plainSandy.under());
+        assertTrue(plainSandy.scrub());
+        assertFalse(off.withoutCoarseDirt(wet).scrub());
+    }
+
+    @Test void imageryKeepsTheUnderlayerWhenItSwapsCoarseDirtForDirt() {
+        BlockState basalt = Blocks.BASALT.defaultBlockState();
+        var savanna = biomes.getHolderOrThrow(Biomes.SAVANNA);
+        ImageryGround plain = new ImageryGround(null, new MercatorGrid(1), 42L);
+        plain.withoutCoarseDirt();
+        GroundPalette.Reading coarseColoured = GroundPalette.read(new double[]{linear(125), linear(90), linear(63)});
+        Surface start = new Surface(savanna, COARSE, basalt, 0, 0, 0, 100, 100, false);
+        int swapped = 0;
+        for (int i = 0; i < 200; i++) {
+            Surface b = plain.apply(start, WorldCoverSource.SHRUBLAND, i * 53, i * 97, ClimateZone.HOT_STEPPE, 0.1, 0.5, coarseColoured);
+            if (b.top() == DIRT && b.scrub()) {
+                swapped++;
+                assertEquals(basalt, b.under(), "only the top block changes");
+            }
+        }
+        assertTrue(swapped > 0, "the sweep must reach the swap to prove anything");
     }
 
     @Test void imageryGroundPicksNoCoarseDirtWhenOff() {

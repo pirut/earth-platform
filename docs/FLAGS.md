@@ -15,7 +15,7 @@ group named in [PLAYING.md](PLAYING.md#engine-switches), with its default as the
 Flags that are not on or off (counts, distances, `auto` modes: `far.threads`, `far.store`, `far.depthPrepass`, `photon.compat`, `earth.transfers`, `earth.home` and the like) stay command-line only.
 So do the six elevation layer flags (`earth.copernicus`, `earth.3dep`, `earth.hrdem`, `earth.rema`, `earth.ign`, `earth.gsi`): they are not settings because the bare-earth heights every world is read through are not yet tied to each world's own pin (see the note under World data), so a setting could not keep existing worlds' layers.
 `EngineToggles` lists the toggles; the settings files are read by `EngineToggles.preload` first thing when the mod starts, before the classes that read these flags once can load, so a changed toggle takes effect the next time the game starts.
-The four `earth.*` flags for canopy, maps, realms and forests are read when a world is made and pinned in it, so they take effect for the next new world at once. `EngineTogglesTest` checks that each on/off flag in the code has a toggle (or a stated reason it has none), with the default shown here.
+The five `earth.*` flags for canopy, maps, realms, forests and coarse dirt (`earth.coarseDirt`) are read when a world is made and pinned in it, so they take effect for the next new world at once. `EngineTogglesTest` checks that each on/off flag in the code has a toggle (or a stated reason it has none), with the default shown here.
 
 ## World data
 
