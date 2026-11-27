@@ -310,7 +310,7 @@ final class ModOres {
             return depth == 0 ? surface.top() : surface.under();
         }
         int floor = under.floor(x, z, ground);
-        if (!under.solid(x, y, z)) return Underground.cavity(y, floor);
+        if (!under.solid(x, y, z)) return Underground.cavity(y, floor, terrain.seaLevel());
         return under.rock(x, y, z, floor);
     }
 

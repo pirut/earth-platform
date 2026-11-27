@@ -270,7 +270,7 @@ final class Structures {
         for (int attempt = 0; attempt < 3; attempt++) {
             int x = (cx << 4) + random.nextInt(16), y = (cy << 4) + random.nextInt(16), z = (cz << 4) + random.nextInt(16);
             int rx = 2 + random.nextInt(2), rz = 2 + random.nextInt(2);
-            if (depthUnder(x, y, z) < 12 || Underground.vanillaY(y, ground.floor(x, z)) <= Underground.LAVA_TOP + 1) continue;
+            if (depthUnder(x, y, z) < 12 || ground.lavaY(y, ground.floor(x, z)) <= Underground.LAVA_TOP + 1) continue;
             if (!ground.solid(x, y - 1, z) || !ground.solid(x, y + 4, z) || !fits(x, y, z, rx, rz)) continue;
             List<int[]> chests = new ArrayList<>();
             for (int c = 0; c < 2; c++) for (int t = 0; t < 3; t++) {

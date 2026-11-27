@@ -1012,7 +1012,7 @@ public abstract class SurfaceGenerator implements CubeGenerator {
                     else if (rock == null && depth >= 4 && bedrock(surface.under()) && Strata.Layers.face(depth, col.height, gi)) state = surface.under();
                     // Cave mouths open the top blocks only where nothing grows on them.
                     boolean open = y <= ceiling[ci] && (depth > 1 || surface.trees() == 0 && (Underground.rock(surface.top()) || surface.top() == GRAVEL));
-                    if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci]);
+                    if (open && state != Underground.BEDROCK && Underground.cave(caveField, lx, ly, lz)) state = Underground.cavity(y, floor[ci], seaLevel());
                 }
                 if (state != AIR) section.setBlockState(lx, ly, lz, state, false);
             }
