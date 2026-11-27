@@ -54,7 +54,7 @@ import net.minecraft.world.phys.Vec3;
  *       is none (the console, a mod).</li>
  *   <li><b>Portal tickets</b> (an entity through a Nether or End portal): the 5x5 columns vanilla
  *       block-ticks round the exit, two cubes up and down from it, kept a loop's length after the
- *       ticket lapses, giving way to any loader that needs the room.</li>
+ *       ticket lapses, giving way to any loader that fits once it has the room.</li>
  *   <li><b>NeoForge forced chunks</b> ({@code TicketController}, what chunk-loader blocks and
  *       entities use): the chunk and its ring, round the owner block's or entity's height.</li>
  * </ul>
@@ -272,7 +272,7 @@ public final class ChunkTickets {
             Entry entry = it.next();
             if (entry.forced != forced || entry.lapsed || now.contains(entry.ask.hold())) continue;
             if (entry.held && entry.ask.hold().kind() == Kind.PORTAL) {
-                // A held exit whose ticket lapsed stays a while, giving way to any loader that needs its room.
+                // A held exit whose ticket lapsed stays a while, giving way to any loader that fits once it has the room.
                 entry.lapsed = true;
                 lapsed.add(entry.ask.hold());
             } else {
@@ -288,8 +288,9 @@ public final class ChunkTickets {
     /**
      * Lets loaders in, strictly in their order, each counting only the cubes it adds to those held. One
      * that doesn't fit takes the room of lapsed portal exits, else waits with everything behind it; a held
-     * loader is never put out for another. Nothing passes a loader still waiting on its ground, while the
-     * ground of the next few is read ahead. A lower cap lets go of lapsed exits, then of the newest holds.
+     * loader is never put out for another. Lapsed exits give way only to a loader that then fits: one too
+     * big even with all of them gone leaves them be, so a portal loop's far side stays loaded. Nothing
+     * passes a loader still waiting on its ground, while the ground of the next few is read ahead. A lower cap lets go of lapsed exits, then of the newest holds.
      */
     private void plan(int cap) {
         plans++;
@@ -314,7 +315,9 @@ public final class ChunkTickets {
             }
             if (admitted >= NEW_PER_PASS) { pending = true; break; }
             long[] keys = box(ask.chunkX(), ask.chunkZ(), ask.reach(), cubeY, ask.v());
-            while (cubeRefs.size() + fresh(keys) > cap && !lapsed.isEmpty()) dropOldestLapsed();
+            if (cubeRefs.size() + fresh(keys) > cap && !lapsed.isEmpty() && fitsWithoutLapsed(keys, cap)) {
+                while (cubeRefs.size() + fresh(keys) > cap && !lapsed.isEmpty()) dropOldestLapsed();
+            }
             if (cubeRefs.size() + fresh(keys) > cap) { full = true; break; }
             it.remove();
             entry.cubeY = cubeY;
@@ -376,6 +379,22 @@ public final class ChunkTickets {
         for (Entry entry : held.values()) if (!seen.add(entry) || !entry.held) return false;
         for (Entry entry : known.values()) if (!entry.lapsed && !seen.contains(entry)) return false;
         return true;
+    }
+
+    /**
+     * Whether a box would fit under {@code cap} with every lapsed portal exit let go of. Only cubes no live hold
+     * keeps are freed, and freeing one of the box's own cubes gains nothing, as the box would load it again.
+     */
+    private boolean fitsWithoutLapsed(long[] keys, int cap) {
+        Long2IntOpenHashMap lapsedRefs = new Long2IntOpenHashMap();
+        for (Hold hold : lapsed) for (long key : known.get(hold).keys) lapsedRefs.addTo(key, 1);
+        LongOpenHashSet box = new LongOpenHashSet(keys);
+        int freed = 0;
+        for (LongIterator it = lapsedRefs.keySet().iterator(); it.hasNext(); ) {
+            long key = it.nextLong();
+            if (lapsedRefs.get(key) == cubeRefs.get(key) && !box.contains(key)) freed++;
+        }
+        return cubeRefs.size() - freed + fresh(keys) <= cap;
     }
 
     /** Lets go of the portal exit whose ticket lapsed longest ago. */

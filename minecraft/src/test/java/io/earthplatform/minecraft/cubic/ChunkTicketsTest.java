@@ -310,6 +310,28 @@ class ChunkTicketsTest {
         assertEquals(1, tickets.holds(), "the lapsed exit goes after its linger");
     }
 
+    @Test void aLoaderTooBigEvenWithTheLapsedExitsGoneLeavesThemHeld() {
+        World world = new World();
+        ChunkTickets tickets = tickets(world);
+        BlockPos exit = new BlockPos(-658_370, 1210, -224_460);
+        tickets.reconcile(20, List.of(portalAt(exit)), 125);
+        tickets.reconcile(40, List.of(), 125);
+        assertEquals(1, tickets.holds(), "the exit lapses but stays");
+        // 5x5 columns, 13 cubes high: 325, past the cap of 125 even were the exit's cubes freed.
+        Ask big = new Ask(new Hold(Kind.FORCED, ChunkPos.asLong(0, 0), 1200), 0, 0, 0, 2, 1200, ChunkTickets.FORCED_V);
+        tickets.reconcile(60, List.of(big), 125);
+        assertTrue(world.resident.holds(CubeKey.ofBlock(exit)), "a loop's far side is not let go of for a loader that is turned away anyway");
+        assertEquals(125, tickets.heldCubes());
+        assertEquals(1, tickets.leftOut());
+        assertTrue(tickets.accountsAdd());
+        // One that fits once the exit is gone still takes its room.
+        tickets.reconcile(80, List.of(forcedAt(3, 0, 1200, 1)), 125);
+        assertFalse(world.resident.holds(CubeKey.ofBlock(exit)));
+        assertTrue(holdsChunk(world, 3, 0, 1200));
+        assertEquals(0, tickets.leftOut());
+        assertTrue(tickets.accountsAdd());
+    }
+
     @Test void pastTheCapOperatorsAreToldOnceAndAgainWhenItFits() {
         World world = new World();
         ChunkTickets tickets = tickets(world);
