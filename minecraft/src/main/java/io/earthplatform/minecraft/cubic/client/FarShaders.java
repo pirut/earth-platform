@@ -1,5 +1,6 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
@@ -23,11 +24,11 @@ final class FarShaders {
      * For a pack with Distant Horizons programs and no Voxy code, see {@link PackPatch#dh}.
      */
     record PackPatch(String fragment, @Nullable String taaOffset, int faceDepthLocation, java.util.List<String> uniforms,
-            java.util.Map<String, String> samplers, @Nullable String vertex, int outputs, boolean terrain) {
-        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, java.util.List.of(), java.util.Map.of()); }
+            java.util.Map<String, String> samplers, @Nullable String vertex, int outputs, boolean terrain, List<Integer> opaqueDrawBuffers) {
+        PackPatch(String fragment, @Nullable String taaOffset) { this(fragment, taaOffset, List.of(), java.util.Map.of(), List.of()); }
 
-        PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers) {
-            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers, null, 0, false);
+        PackPatch(String fragment, @Nullable String taaOffset, java.util.List<String> uniforms, java.util.Map<String, String> samplers, List<Integer> opaqueDrawBuffers) {
+            this(fragment, taaOffset, FarShaders.faceDepthLocation(fragment), uniforms, samplers, null, 0, false, opaqueDrawBuffers);
         }
 
         /**
@@ -49,6 +50,27 @@ final class FarShaders {
     private static final Pattern SAMPLER_LIST = Pattern.compile("\"samplers\"\\s*:\\s*(\\[[^\\]]*\\]|\\{[^}]*\\})");
     private static final Pattern QUOTED = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"");
     private static final Pattern SAMPLER_ENTRY = Pattern.compile("\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*:\\s*(?:\"([A-Za-z_][A-Za-z0-9_]*)\"|null)");
+
+    private static final Pattern OPAQUE_DRAW_BUFFERS = Pattern.compile("\"opaqueDrawBuffers\"\\s*:\\s*\\[([^\\]]*)\\]");
+    private static final Pattern DRAW_BUFFER_LIST = Pattern.compile("\\s*\\d+(?:\\s*,\\s*\\d+)*\\s*");
+
+    /** Maps successive Voxy fragment outputs to the pack's colortex indices. */
+    static List<Integer> voxyDrawBuffers(@Nullable String settings) {
+        if (settings == null) return List.of();
+        Matcher list = OPAQUE_DRAW_BUFFERS.matcher(COMMENTS.matcher(settings).replaceAll(" "));
+        if (!list.find() || !DRAW_BUFFER_LIST.matcher(list.group(1)).matches()) return List.of();
+        List<Integer> buffers = new java.util.ArrayList<>();
+        for (String entry : list.group(1).split(",")) {
+            try {
+                int target = Integer.parseInt(entry.trim());
+                if (buffers.contains(target)) return List.of();
+                buffers.add(target);
+            } catch (NumberFormatException invalid) {
+                return List.of();
+            }
+        }
+        return List.copyOf(buffers);
+    }
 
     /** The uniform names a Voxy {@code voxy.json} lists, in order; empty when it lists none. */
     static java.util.List<String> voxyUniforms(@Nullable String settings) {
@@ -878,6 +900,8 @@ final class FarShaders {
     /** The same for a fade (see {@link #fade}). */
     static String packFragment(String version, String patch, boolean ownDepth, int fade) { return packFragment(version, patch, ownDepth, fade, false); }
 
+    private static final Pattern LEGACY_TEXTURE = Pattern.compile("\\btexture2D(?=\\s*\\()");
+
     /** The same, drawing only where the game drew none of its blocks with {@code ground} (see {@link #GROUND}). */
     static String packFragment(String version, String patch, boolean ownDepth, int fade, boolean ground) {
         StringBuilder extensions = new StringBuilder(), body = new StringBuilder();
@@ -887,7 +911,14 @@ final class FarShaders {
             else if (!trimmed.startsWith("#version")) body.append(line).append('\n');
         }
         String patched = FACE_NORMAL.matcher(body).replaceFirst("$1\n    $2 = earth_packNormal($2);");
-        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + (ground ? GROUND : "") + fade(fade) + VOXY_PARAMETERS + patched
+        if (version.contains(" core")) patched = LEGACY_TEXTURE.matcher(patched).replaceAll("texture");
+        String code = COMMENTS.matcher(patched).replaceAll(" ");
+        // Some packs use the block lightmap without listing it in voxy.json. FarGpu supplies it
+        // on its own lightmap unit. A sampler already declared by the pack keeps its Iris binding.
+        String lightmap = reads(code, "lightmap") && !declares(code, "lightmap")
+                ? "uniform sampler2D earth_Lightmap;\n#define lightmap earth_Lightmap\n" : "";
+        return version + extensions + (ownDepth ? "#define EARTH_OWN_DEPTH\n" : "") + (ground ? GROUND : "") + fade(fade)
+                + VOXY_PARAMETERS + lightmap + patched + (lightmap.isEmpty() ? "" : "#undef lightmap\n")
                 + (ownDepth ? faceDepthAt(PACK_MAIN, faceDepthLocation(patch)) : PACK_MAIN);
     }
 
@@ -922,7 +953,7 @@ final class FarShaders {
                 + " dhMaterialId = earth_dhMaterial; _vert_tex_light_coord = earth_dhLight; _vert_color = earth_dhColour; " + vertex.substring(end);
         String vertexCode = MAIN.matcher(unpacked).replaceFirst("void earth_dhMain()");
         String fragmentCode = MAIN.matcher(fragment).replaceFirst("void earth_dhMain()");
-        return new PackPatch(fragmentCode, null, faceDepthLocation(fragmentCode), java.util.List.of(), java.util.Map.of(), vertexCode, outputs, false);
+        return new PackPatch(fragmentCode, null, faceDepthLocation(fragmentCode), java.util.List.of(), java.util.Map.of(), vertexCode, outputs, false, List.of());
     }
 
     /** The index of the brace closing the one at {@code open}, or -1. */
@@ -1091,7 +1122,7 @@ final class FarShaders {
         assign.append("}\n");
         String vertexCode = MAIN.matcher(rewritten).replaceFirst("void earth_terrainMain()") + assign;
         String fragmentCode = MAIN.matcher(fragment).replaceFirst("void earth_terrainMain()");
-        return new PackPatch(fragmentCode, null, 0, java.util.List.of(), java.util.Map.of(), vertexCode, outputs, true);
+        return new PackPatch(fragmentCode, null, 0, java.util.List.of(), java.util.Map.of(), vertexCode, outputs, true, List.of());
     }
 
     /**

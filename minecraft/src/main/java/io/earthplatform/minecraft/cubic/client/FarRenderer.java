@@ -1823,7 +1823,8 @@ public final class FarRenderer {
                 try { drawEach(gpu, nearDraws, again, near, seen, setting); }
                 finally { FarGpuTimers.end(timer, gpu.ranges, -1); }
             }
-            FarLod.beginDraw(modelView, position.x, position.y, position.z);
+            var patch = ShaderBlocks.voxyPatch();
+            FarLod.beginDraw(modelView, position.x, position.y, position.z, patch, gpu.voxyDrawBuffers(patch));
         }
         if (own && gpu.depthPrepass && FarLod.prepassReady() && gpu.prepassReady(ShaderBlocks.voxyPatch())) {
             // Depth first, then shading only the faces it kept (see FarGpu#DEPTH_PREPASS).
