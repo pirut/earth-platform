@@ -89,6 +89,7 @@
     "compat.ImmersiveVehiclesEntityMixin",
     "CubicWeatherMixin",
     "CubicServerWeatherMixin",
+    "CubicFreezeMixin",
     "CubicPortalFireMixin",
     "CubicPortalMixin",
     "CubicPortalPoiMixin",
