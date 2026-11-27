@@ -1,5 +1,9 @@
 # Builds the mod and runs the tests on every pull request. Read-only: it can't push, tag or release,
 # and pull requests from forks get no secrets. Third-party actions are pinned to full commit SHAs.
+# Agent pull requests (agent/* branches, opened by .github/workflows/agent.yml) run code an agent
+# wrote, so this workflow must stay safe for them: contents: read, no kept checkout credentials,
+# and no secrets. A job that ever needs a secret must skip agent/* branches with
+#   if: ${{ !startsWith(github.head_ref, 'agent/') }}
 name: CI
 
 on:
@@ -17,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
@@ -76,6 +82,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
