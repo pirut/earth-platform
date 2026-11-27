@@ -45,21 +45,31 @@ class UndergroundTest {
     }
 
     @Test void mountainCaveLavaStaysBelowSeaLevel() {
-        assertEquals(Underground.AIR, Underground.cavity(1850, 2000));
-        assertEquals(Underground.AIR, Underground.cavity(0, 2000));
-        assertEquals(Underground.LAVA, Underground.cavity(-57, 2000));
-        assertEquals(Underground.AIR, Underground.cavity(-56, 2000));
+        assertEquals(Underground.AIR, Underground.cavity(1850, 2000, 62));
+        assertEquals(Underground.AIR, Underground.cavity(0, 2000, 62));
+        assertEquals(Underground.LAVA, Underground.cavity(-57, 2000, 62));
+        assertEquals(Underground.AIR, Underground.cavity(-56, 2000, 62));
     }
 
     @Test void seaLevelCaveLavaHasTheSameBoundary() {
-        assertEquals(Underground.AIR, Underground.cavity(-56, 62));
-        assertEquals(Underground.LAVA, Underground.cavity(-57, 62));
+        assertEquals(Underground.AIR, Underground.cavity(-56, 62, 62));
+        assertEquals(Underground.LAVA, Underground.cavity(-57, 62, 62));
     }
 
     @Test void deepOceanCaveLavaStaysBelowTheSeabed() {
-        assertEquals(Underground.AIR, Underground.cavity(-2050, -2000));
-        assertEquals(Underground.AIR, Underground.cavity(-2118, -2000));
-        assertEquals(Underground.LAVA, Underground.cavity(-2119, -2000));
+        assertEquals(Underground.AIR, Underground.cavity(-2050, -2000, 62));
+        assertEquals(Underground.AIR, Underground.cavity(-2118, -2000, 62));
+        assertEquals(Underground.LAVA, Underground.cavity(-2119, -2000, 62));
+    }
+
+    @Test void bothWorldSeaLevelsCapLava() {
+        for (int sea : new int[]{62, 2380}) {
+            for (int floor : new int[]{sea, sea + 2000, sea - 2000}) {
+                int ceiling = Math.min(floor, sea) - 118;
+                assertEquals(Underground.AIR, Underground.cavity(ceiling, floor, sea));
+                assertEquals(Underground.LAVA, Underground.cavity(ceiling - 1, floor, sea));
+            }
+        }
     }
 
     @Test void mountainRockAndOreHeightsStillUseTheUncappedFloor() {
@@ -117,8 +127,7 @@ class UndergroundTest {
         System.out.println(counts);
         System.out.println("block entities " + blockEntities.size() + ", entities " + entities.size());
         for (CompoundTag tag : blockEntities) System.out.println("  " + tag);
-        // This highland sample is above the lava ceiling; lava boundaries are tested separately.
-        for (String ore : List.of("coal_ore", "iron_ore", "copper_ore", "deepslate_diamond_ore", "deepslate_redstone_ore", "deepslate_gold_ore",
+        for (String ore : List.of("lava", "coal_ore", "iron_ore", "copper_ore", "deepslate_diamond_ore", "deepslate_redstone_ore", "deepslate_gold_ore",
                 "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "glow_lichen",
                 "sculk", "sculk_sensor", "sculk_shrieker", "moss_block", "pointed_dripstone", "bone_block"))
             assertTrue(counts.getOrDefault(ore, 0) > 0, ore);

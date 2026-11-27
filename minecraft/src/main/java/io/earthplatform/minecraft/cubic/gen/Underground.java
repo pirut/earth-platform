@@ -1,7 +1,6 @@
 package io.earthplatform.minecraft.cubic.gen;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
-import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,8 +36,8 @@ import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
  * under a valley or seabed, diamonds lie about 120 under it, and a mountain is solid
  * rock above its valleys with iron, coal and emeralds as vanilla's mountains have. Below the
  * depth where vanilla's world ends, the bottom layers carry on down to bedrock at the true
- * bottom of the world. Cave lava uses the floor capped at Earth sea level instead: it fills
- * strictly below Y -56 on land, and strictly below 118 blocks under deeper seabeds.
+ * bottom of the world. Cave lava uses the floor capped at the world's sea level instead: above sea level its ceiling stays flat at sea level minus 118 blocks; below sea level,
+ * including deep seabeds and basins, lava stays strictly more than 118 blocks under the local floor.
  */
 final class Underground {
     static final BlockState AIR = Blocks.AIR.defaultBlockState(), STONE = Blocks.STONE.defaultBlockState(),
@@ -168,11 +167,13 @@ final class Underground {
         return copper ? GRANITE : TUFF;
     }
 
-    /** Air, or lava strictly below 118 blocks under the floor capped at Earth sea level. */
-    static BlockState cavity(int y, int floor) {
-        int lavaFloor = Math.min(floor, EarthGenerator.SEA);
+    /** Air, or lava strictly below 118 blocks under the floor capped at the world's sea level. */
+    static BlockState cavity(int y, int floor, int sea) {
+        int lavaFloor = Math.min(floor, sea);
         return vanillaY(y, lavaFloor) < LAVA_TOP ? LAVA : AIR;
     }
+
+    int lavaY(int y, int floor) { return vanillaY(y, Math.min(floor, terrain.seaLevel())); }
 
     /** The cave noise at a grid node: tunnels, noodles and caverns. Nodes sit every 4 blocks. */
     private double caveNode(int x, int y, int z) {
