@@ -51,7 +51,7 @@ Distant terrain is built in levels that get coarser with distance and refine as 
 ## Shaders
 
 **Which shader packs work?**
-Photon v1.3b is tested. Packs that include Voxy support light the far terrain like nearby blocks. Other packs work for nearby blocks, but far terrain may look flat.
+Photon v1.3b is tested in game. Complementary Reimagined r5.10, Complementary Unbound r5.10 and MakeUp Ultra Fast 9.6a are expected to work. Their far shaders passed offline checks and still need in-game confirmation. Other packs work for nearby blocks, but far terrain may look flat.
 
 **The game won't start after adding Iris or Sodium.**
 Earth Platform needs Iris 1.8.14 or a later 1.8 release and Sodium 0.8.12 or a later 0.8 release (see the [install guide](INSTALL.md#shaders-optional)). Older builds, and Iris 1.9 or Sodium 0.9, are refused at start-up so they can't break the far terrain.

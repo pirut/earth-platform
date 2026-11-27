@@ -157,6 +157,8 @@
     "CubicShaderFarMixin",
     "CubicIrisSourceNamesMixin",
     "CubicIrisProgramSetMixin",
+    "CubicIrisDimensionMixin",
+    "IrisRenderTargetsAccess",
     "CubicRainRenderMixin",
     "CubicWaterTintMixin",
     "CubicIrisPhotonCompatMixin",

@@ -1277,6 +1277,19 @@ final class FarGpu {
         return packGround[fade];
     }
 
+    /** Additional targets are safe to draw into only if the Voxy program linked. */
+    java.util.List<Integer> voxyDrawBuffers(@Nullable FarShaders.PackPatch patch) {
+        if (patch == null || patch.opaqueDrawBuffers().size() < 2) return java.util.List.of();
+        boolean wasNear = near, wasGround = ground;
+        near = ground = false;
+        try {
+            return packProgram(patch, NO_FADE) != null && packPatched ? patch.opaqueDrawBuffers() : java.util.List.of();
+        } finally {
+            near = wasNear;
+            ground = wasGround;
+        }
+    }
+
     /** Whether the pack's Voxy code builds; once it fails, every fade uses the plain colours too. */
     private boolean packPatched;
 

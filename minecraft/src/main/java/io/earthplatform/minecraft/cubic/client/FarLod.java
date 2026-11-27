@@ -5,6 +5,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import io.earthplatform.minecraft.EarthPlatformMod;
 import io.earthplatform.minecraft.platform.Loader;
 import java.nio.FloatBuffer;
+import java.util.Arrays;
+import java.util.List;
 import java.util.function.ToIntFunction;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
@@ -218,27 +220,34 @@ public final class FarLod {
     }
 
     /**
-     * Points far terrain's draw at the pack's first terrain target and at far terrain's own depth,
+     * Points far terrain's draw at the pack's terrain targets and at far terrain's own depth,
      * after the pack's terrain program has bound its buffers. The game's depth is bound on a unit
      * the far shader reads, so far terrain stays behind whatever the game drew.
      */
-    static void beginDraw(Matrix4fc view, double x, double y, double z) {
+    static void beginDraw(Matrix4fc view, double x, double y, double z, @Nullable FarShaders.PackPatch patch, List<Integer> voxyBuffers) {
         var target = Minecraft.getInstance().getMainRenderTarget();
         if (depth == 0 || target.width != width || target.height != height) resize(target.width, target.height);
         drawnFrom = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
         int colour = attached(GL11C.glGetInteger(GL20C.GL_DRAW_BUFFER0));
         gameDepth = attached(GL30C.GL_DEPTH_ATTACHMENT);
+        packTargets = dhActive() ? FarDhPack.targets() : null;
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, framebuffer);
-        dhTargets = dhActive() ? FarDhPack.targets() : null;
-        if (dhTargets != null) {
-            // The pack's Distant Horizons program draws to its own list of targets: its first at 0, the rest from 2 up.
-            for (int i = 0; i < dhTargets.length; i++) {
-                GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, dhAttachment(i), GL11C.GL_TEXTURE_2D, dhTargets[i], 0);
-            }
+        dhDraw = packTargets != null;
+        faceLocation = patch == null ? 1 : patch.faceDepthLocation();
+        if (dhDraw) {
             dhBlend = GL11C.glIsEnabled(GL11C.GL_BLEND);
             GL11C.glDisable(GL11C.GL_BLEND);
-        } else {
+        } else if (voxyBuffers.size() > 1 && faceLocation >= voxyBuffers.size()
+                && faceLocation < maxDrawBuffers() && voxyBuffers.size() < maxColorAttachments()) {
+            int[] textures = FarLodIris.voxyTargets(voxyBuffers, width, height);
+            if (textures != null && textures[0] == colour) packTargets = textures;
+        }
+        if (packTargets == null) {
             GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, colour, 0);
+        } else {
+            for (int i = 0; i < packTargets.length; i++) {
+                GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, packAttachment(i), GL11C.GL_TEXTURE_2D, packTargets[i], 0);
+            }
         }
         GL20C.glDrawBuffers(targets(true, true));
         previousActive = GlStateManager._getActiveTexture();
@@ -286,14 +295,24 @@ public final class FarLod {
     static int width() { return width; }
     static int height() { return height; }
 
-    private static int maxDrawBuffers;
-    /** The pack's targets far terrain is being drawn to with its Distant Horizons program, by output; null otherwise. */
-    @Nullable private static int[] dhTargets;
-    private static boolean dhBlend;
+    private static int maxDrawBuffers, maxColorAttachments, faceLocation;
+    /** Color textures for the pack's fragment outputs on this draw, or null for the original first target. */
+    @Nullable private static int[] packTargets;
+    private static boolean dhDraw, dhBlend;
 
-    /** Where the pack's target for output {@code i} is attached: attachment 1 is far terrain's faces' depth. */
-    private static int dhAttachment(int output) {
+    /** Attachment 1 is held for far terrain's face depth, whichever output writes it. */
+    private static int packAttachment(int output) {
         return output == 0 ? GL30C.GL_COLOR_ATTACHMENT0 : GL30C.GL_COLOR_ATTACHMENT1 + output;
+    }
+
+    private static int maxDrawBuffers() {
+        if (maxDrawBuffers == 0) maxDrawBuffers = Math.max(2, GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS));
+        return maxDrawBuffers;
+    }
+
+    private static int maxColorAttachments() {
+        if (maxColorAttachments == 0) maxColorAttachments = GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS);
+        return maxColorAttachments;
     }
 
     /**
@@ -301,33 +320,20 @@ public final class FarLod {
      * draw buffer and an attachment, and far terrain's faces' depth one more of each.
      */
     static boolean dhFits(int outputs) {
-        return outputs + 1 <= Math.min(GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS), GL11C.glGetInteger(GL30C.GL_MAX_COLOR_ATTACHMENTS));
+        return outputs + 1 <= Math.min(maxDrawBuffers(), maxColorAttachments());
     }
 
-    /**
-     * Far terrain's draw buffers by fragment output location: the pack's first target at 0 (when
-     * {@code colour}), and far terrain's faces' own depth at the location the pack's Voxy code
-     * leaves free for it (when {@code faces}; see {@link FarShaders#faceDepthLocation}). The pack's
-     * other outputs, such as Complementary's second, go to no buffer, so they are dropped rather
-     * than written into a target of the pack's that they weren't meant for.
-     */
     private static int[] targets(boolean colour, boolean faces) {
-        FarShaders.PackPatch patch = ShaderBlocks.voxyPatch();
-        if (maxDrawBuffers == 0) maxDrawBuffers = Math.max(2, GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS));
-        if (dhTargets != null) {
-            // Every output of the pack's Distant Horizons program goes to the target the pack names for it.
-            int location = patch == null ? dhTargets.length : patch.faceDepthLocation();
-            int[] buffers = new int[Math.min(Math.max(dhTargets.length, location + 1), maxDrawBuffers)];
-            java.util.Arrays.fill(buffers, GL11C.GL_NONE);
-            if (colour) for (int i = 0; i < dhTargets.length && i < buffers.length; i++) buffers[i] = dhAttachment(i);
-            if (faces && location < buffers.length) buffers[location] = GL30C.GL_COLOR_ATTACHMENT1;
-            return buffers;
-        }
-        int location = Math.min(patch == null ? 1 : patch.faceDepthLocation(), maxDrawBuffers - 1);
-        int[] buffers = new int[location + 1];
-        java.util.Arrays.fill(buffers, GL11C.GL_NONE);
-        if (colour) buffers[0] = GL30C.GL_COLOR_ATTACHMENT0;
-        if (faces) buffers[location] = GL30C.GL_COLOR_ATTACHMENT1;
+        return drawBuffers(packTargets == null ? 1 : packTargets.length, faceLocation, maxDrawBuffers(), colour, faces);
+    }
+
+    /** Maps fragment output locations to the attached pack colors and face depth for this pass. */
+    static int[] drawBuffers(int packOutputs, int faceLocation, int limit, boolean colour, boolean faces) {
+        int face = Math.min(faceLocation, limit - 1);
+        int[] buffers = new int[Math.min(Math.max(packOutputs, face + 1), limit)];
+        Arrays.fill(buffers, GL11C.GL_NONE);
+        if (colour) for (int i = 0; i < packOutputs && i < buffers.length; i++) buffers[i] = packAttachment(i);
+        if (faces) buffers[face] = GL30C.GL_COLOR_ATTACHMENT1;
         return buffers;
     }
 
@@ -395,17 +401,18 @@ public final class FarLod {
 
     static void endDraw() {
         GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D, 0, 0);
-        if (dhTargets != null) {
-            for (int i = 1; i < dhTargets.length; i++) GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, dhAttachment(i), GL11C.GL_TEXTURE_2D, 0, 0);
-            if (dhBlend) GL11C.glEnable(GL11C.GL_BLEND);
+        if (packTargets != null) {
+            for (int i = 1; i < packTargets.length; i++) {
+                GL30C.glFramebufferTexture2D(GL30C.GL_DRAW_FRAMEBUFFER, packAttachment(i), GL11C.GL_TEXTURE_2D, 0, 0);
+            }
         }
-        boolean dhDrawn = dhTargets != null;
-        dhTargets = null;
+        if (dhDraw && dhBlend) GL11C.glEnable(GL11C.GL_BLEND);
+        packTargets = null;
         unbind(SCRATCH_UNIT);
         unbind(VANILLA_UNIT);
         smooth();
         // A pack's Distant Horizons program takes no shadows from far terrain's own pass; it shades far terrain itself.
-        if (dhDrawn) shadowsReady = false;
+        if (dhDraw) shadowsReady = false;
         else shadows();
         GlStateManager._glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, drawnFrom);
         GlStateManager._activeTexture(previousActive);

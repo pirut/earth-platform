@@ -153,6 +153,7 @@ A world pins its elevation layers when it is made, but the bare-earth ground (`B
 
 | Flag | Default | What it does | Read in |
 | --- | --- | --- | --- |
+| `earthplatform.iris.overworld` | `true` | Iris looks up the Earth's shaders as `minecraft:overworld` unless the pack explicitly maps `earthplatform:cubic`. Set `-Dearthplatform.iris.overworld=false` to restore lookup by `earthplatform:cubic` for all packs. Command-line only | `CubicIrisDimensionMixin` |
 | `earthplatform.photon.compat` | `auto` | `on` or `off` overrides the check for running Photon on drivers it doesn't fit | `PhotonCompat` |
 | `earthplatform.far.surfacePackets` | `true` | Far columns that are only ground, water and cover (most of those at 8-block voxels and wider) are made, sent and kept on disk as vertical runs, not filled voxel sections; the client meshes the runs as they are. Columns with trees drawn as trees, giant groves, layered rock or builds stay sections. `false` sends every column as sections, as before build 70 | `FarServer` |
 | `earthplatform.far.checkPackets` | `false` | For checking the flag above: each column of runs is also made as sections and compared; one that differs is logged and sent as sections. The status command then counts them. Doubles the work of making far columns | `FarServer` |

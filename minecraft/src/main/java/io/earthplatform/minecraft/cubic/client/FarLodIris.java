@@ -1,11 +1,15 @@
 package io.earthplatform.minecraft.cubic.client;
 
+import io.earthplatform.minecraft.cubic.mixin.IrisRenderTargetsAccess;
+import java.util.List;
+import javax.annotation.Nullable;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.sampler.SamplerHolder;
 import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.gl.uniform.DynamicUniformHolder;
 import net.irisshaders.iris.gl.uniform.UniformUpdateFrequency;
+import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -33,6 +37,23 @@ public final class FarLodIris {
                 .uniformMatrix(UniformUpdateFrequency.PER_FRAME, "vxViewProj", () -> views().viewProjection)
                 .uniformMatrix(UniformUpdateFrequency.PER_FRAME, "vxViewProjInv", () -> views().viewProjectionInverse)
                 .uniformMatrix(UniformUpdateFrequency.PER_FRAME, "vxViewProjPrev", () -> views().previousViewProjection);
+    }
+
+    /** Resolves colortex indices to the textures Iris's current terrain pass writes to. */
+    @Nullable static int[] voxyTargets(List<Integer> buffers, int width, int height) {
+        if (!(Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline)) return null;
+        var targets = ((IrisRenderTargetsAccess) pipeline).earthplatform$renderTargets();
+        var flipped = pipeline.isBeforeTranslucent ? pipeline.getFlippedAfterPrepare() : pipeline.getFlippedAfterTranslucent();
+        int[] textures = new int[buffers.size()];
+        for (int output = 0; output < textures.length; output++) {
+            int index = buffers.get(output);
+            if (index >= targets.getRenderTargetCount()) return null;
+            var target = targets.get(index);
+            // Only attach textures already used by this pipeline, at the far framebuffer's size.
+            if (target == null || target.getWidth() != width || target.getHeight() != height) return null;
+            textures[output] = flipped.contains(index) ? target.getAltTexture() : target.getMainTexture();
+        }
+        return textures;
     }
 
     /** Far terrain's projection for this frame, as a pack compiled for Distant Horizons reads it ({@code dhProjection}). */

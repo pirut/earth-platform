@@ -40,6 +40,7 @@ The first release of Earth Platform for Minecraft 1.21.1 and NeoForge 21.1.
 - Far view and sharpness on the pause menu: 37 to 201 km of far terrain, and Fast to Sharpest. Extreme settings for very powerful computers go further: up to 397 km, and Extreme and Ultra sharpness for far blocks a half and a third of Balanced's size on screen.
 - Soft clouds at the Earth's cloud height, kept clear of the jet stream.
 - Works with Iris and Photon, which light near blocks and far terrain alike.
+- Iris uses Overworld shaders for Earth unless a pack maps Earth explicitly. Far terrain supports legacy lightmap calls and writes to the pack's additional Voxy color targets.
 - Nearby ground's meshing and uploads are spread over frames, so teleporting, fast flight and switching shader packs should not stall a single frame (contributed by VanceCStone, #161).
 - A spyglass sharpens a nearby peak when you zoom at it from a plane or a mountain top (contributed by VanceCStone, #161).
 - Distant flat-colored water is nearly opaque, so the seabed no longer shows through far oceans and lakes without a shader pack (contributed by VanceCStone, #161).

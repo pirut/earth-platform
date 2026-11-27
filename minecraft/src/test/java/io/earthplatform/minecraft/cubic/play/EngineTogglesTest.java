@@ -341,7 +341,8 @@ class EngineTogglesTest {
             "earth.hrdem", ELEVATION_LAYER,
             "earth.rema", ELEVATION_LAYER,
             "earth.ign", ELEVATION_LAYER,
-            "earth.gsi", ELEVATION_LAYER);
+            "earth.gsi", ELEVATION_LAYER,
+            "iris.overworld", "command-line escape hatch for packs that need the Earth dimension ID");
 
     @Test void everyOnOffFlagInTheCodeHasAToggleOrAReasonItHasNone() throws IOException {
         Set<String> missing = new TreeSet<>(readsInTheSources().keySet());
