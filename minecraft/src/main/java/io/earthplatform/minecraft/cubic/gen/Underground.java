@@ -1,6 +1,7 @@
 package io.earthplatform.minecraft.cubic.gen;
 
 import io.earthplatform.minecraft.cubic.CubeWorld;
+import io.earthplatform.minecraft.cubic.earth.EarthGenerator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,17 +34,18 @@ import net.minecraft.world.level.levelgen.synth.ImprovedNoise;
  * the ground can stand anywhere from the deep seabed to Everest, so the layers hang from a
  * <em>floor</em> instead: the lowest ground around a column, smoothed over a few hundred blocks.
  * A block's vanilla-equivalent height is {@code y - floor + 64}, so deepslate starts 64 blocks
- * under a valley or seabed, diamonds and lava lie about 120 under it, and a mountain is solid
+ * under a valley or seabed, diamonds lie about 120 under it, and a mountain is solid
  * rock above its valleys with iron, coal and emeralds as vanilla's mountains have. Below the
  * depth where vanilla's world ends, the bottom layers carry on down to bedrock at the true
- * bottom of the world.
+ * bottom of the world. Cave lava uses the floor capped at Earth sea level instead: it fills
+ * strictly below Y -56 on land, and strictly below 118 blocks under deeper seabeds.
  */
 final class Underground {
     static final BlockState AIR = Blocks.AIR.defaultBlockState(), STONE = Blocks.STONE.defaultBlockState(),
             DEEPSLATE = Blocks.DEEPSLATE.defaultBlockState(), LAVA = Blocks.LAVA.defaultBlockState(),
             BEDROCK = Blocks.BEDROCK.defaultBlockState(), GRAVEL = Blocks.GRAVEL.defaultBlockState();
 
-    /** Vanilla heights where deepslate starts to mix in and where caves below fill with lava. */
+    /** Vanilla heights for deepslate mixing and cave lava; lava uses a sea-level-capped floor. */
     static final int DEEPSLATE_TOP = 8, LAVA_TOP = -54;
     /** Ore and rock odds below vanilla's bottom stay as they are at its bottom, and above its mountains as at their tops. */
     private static final int ORE_FLOOR = -60, ORE_CEILING = 320;
@@ -166,8 +168,11 @@ final class Underground {
         return copper ? GRANITE : TUFF;
     }
 
-    /** What fills a cave at a height: air, or lava at the vanilla depth where lava lies. */
-    static BlockState cavity(int y, int floor) { return vanillaY(y, floor) < LAVA_TOP ? LAVA : AIR; }
+    /** Air, or lava strictly below 118 blocks under the floor capped at Earth sea level. */
+    static BlockState cavity(int y, int floor) {
+        int lavaFloor = Math.min(floor, EarthGenerator.SEA);
+        return vanillaY(y, lavaFloor) < LAVA_TOP ? LAVA : AIR;
+    }
 
     /** The cave noise at a grid node: tunnels, noodles and caverns. Nodes sit every 4 blocks. */
     private double caveNode(int x, int y, int z) {

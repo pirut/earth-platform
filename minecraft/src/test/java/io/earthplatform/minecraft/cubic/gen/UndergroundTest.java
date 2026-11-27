@@ -44,6 +44,35 @@ class UndergroundTest {
         return ids;
     }
 
+    @Test void mountainCaveLavaStaysBelowSeaLevel() {
+        assertEquals(Underground.AIR, Underground.cavity(1850, 2000));
+        assertEquals(Underground.AIR, Underground.cavity(0, 2000));
+        assertEquals(Underground.LAVA, Underground.cavity(-57, 2000));
+        assertEquals(Underground.AIR, Underground.cavity(-56, 2000));
+    }
+
+    @Test void seaLevelCaveLavaHasTheSameBoundary() {
+        assertEquals(Underground.AIR, Underground.cavity(-56, 62));
+        assertEquals(Underground.LAVA, Underground.cavity(-57, 62));
+    }
+
+    @Test void deepOceanCaveLavaStaysBelowTheSeabed() {
+        assertEquals(Underground.AIR, Underground.cavity(-2050, -2000));
+        assertEquals(Underground.AIR, Underground.cavity(-2118, -2000));
+        assertEquals(Underground.LAVA, Underground.cavity(-2119, -2000));
+    }
+
+    @Test void mountainRockAndOreHeightsStillUseTheUncappedFloor() {
+        Underground under = new HighlandsGenerator(7, biomes).underground();
+        // These heights are above the new lava ceiling but still in mountain deepslate.
+        // Vanilla Y -1 and -61 are outside the large ore veins' ranges.
+        assertEquals(Underground.DEEPSLATE, under.rock(0, 1935, 0, 2000));
+        assertEquals(Underground.DEEPSLATE, under.rock(0, 1875, 0, 2000));
+        assertEquals(Underground.STONE, under.rock(0, 2000, 0, 2000));
+        // Ore placement keeps the same vanilla-equivalent depth below the mountain floor.
+        assertEquals(-54, Underground.vanillaY(1882, 2000));
+    }
+
     @Test void cubesAreTheSameWhicheverGeneratorAndOrderMakesThem() {
         HighlandsGenerator a = new HighlandsGenerator(42, biomes), b = new HighlandsGenerator(42, biomes);
         int top = a.surfaceY(8, 8) >> 4;
@@ -88,8 +117,9 @@ class UndergroundTest {
         System.out.println(counts);
         System.out.println("block entities " + blockEntities.size() + ", entities " + entities.size());
         for (CompoundTag tag : blockEntities) System.out.println("  " + tag);
+        // This highland sample is above the lava ceiling; lava boundaries are tested separately.
         for (String ore : List.of("coal_ore", "iron_ore", "copper_ore", "deepslate_diamond_ore", "deepslate_redstone_ore", "deepslate_gold_ore",
-                "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "lava", "glow_lichen",
+                "deepslate_lapis_ore", "granite", "diorite", "andesite", "tuff", "gravel", "glow_lichen",
                 "sculk", "sculk_sensor", "sculk_shrieker", "moss_block", "pointed_dripstone", "bone_block"))
             assertTrue(counts.getOrDefault(ore, 0) > 0, ore);
         assertTrue(counts.getOrDefault("spawner", 0) > 0, "spawners");
