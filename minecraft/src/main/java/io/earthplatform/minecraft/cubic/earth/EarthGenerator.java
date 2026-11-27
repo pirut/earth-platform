@@ -4419,8 +4419,27 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     private Surface surface(int x, int z, int y, int water, int slope, int voxel) { return surface(x, z, y, water, slope, voxel, imageryGround); }
 
+    @Override protected void onCoarseDirtOff() {
+        if (imageryGround != null) imageryGround.withoutCoarseDirt();
+    }
+
+    /**
+     * What a surface becomes in a world pinned without coarse dirt: grass where the ground under it is soil in a
+     * wet enough land, plain dirt in dry scrub and on loose cinder and wash, and plain dirt (never sand, which would
+     * grow cacti) where sandstone lies beneath. Dry ground keeps its scrub plants through {@link Surface#scrub}. Every other surface, and every surface in a world that keeps coarse dirt, is returned as it was.
+     */
+    Surface withoutCoarseDirt(Surface s) {
+        if (coarseDirt() || s.top() != COARSE_DIRT) return s;
+        boolean grass = s.under() == DIRT && !ModdedBiomes.isArid(s.biome());
+        return new Surface(s.biome(), grass ? GRASS : DIRT, s.under(), s.trees(), s.spruce(), s.birch(), s.grass(), s.flowers(), s.ferns(), s.broadleaf(), !grass);
+    }
+
     /** Imagery ground rules for this world's grid and seed, reading from any imagery source; for {@link ImageryCalibration}. */
-    ImageryGround imageryGround(ImagerySource source) { return new ImageryGround(source, grid, seed); }
+    ImageryGround imageryGround(ImagerySource source) {
+        ImageryGround made = new ImageryGround(source, grid, seed);
+        if (!coarseDirt()) made.withoutCoarseDirt();
+        return made;
+    }
 
     /**
      * Blocks each way over which a slope must hold for bare rock. The 1-5 m elevation data carry
@@ -4447,6 +4466,11 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     /** A column's surface with the given imagery, or none, having the last word; for {@link ImageryCalibration}. */
     Surface surface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
+        Surface made = columnSurface(x, z, y, water, slope, voxel, imageryGround);
+        return withoutCoarseDirt(made);
+    }
+
+    private Surface columnSurface(int x, int z, int y, int water, int slope, int voxel, @Nullable ImageryGround imageryGround) {
         if (mercator == null && grid.tryGeographic(x + 0.5, z + 0.5) == null) {
             return new Surface(deepOcean, GRAVEL, GRAVEL, 0, 0, 0, 0, 0, false);
         }

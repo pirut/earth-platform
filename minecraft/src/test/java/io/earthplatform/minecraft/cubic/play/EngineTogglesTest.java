@@ -354,9 +354,16 @@ class EngineTogglesTest {
     }
 
     @Test void theElevationLayersStayCommandLineFlagsAndTheOtherNewWorldDataIsPerWorld() {
-        assertEquals(Set.of("earth.canopy", "earth.maps", "earth.realms", "earth.forests"),
+        assertEquals(Set.of("earth.canopy", "earth.maps", "earth.realms", "earth.forests", "earth.coarseDirt"),
                 EngineToggles.of(Side.COMMON, Group.WORLD_DATA).stream().map(Toggle::property).collect(java.util.stream.Collectors.toSet()));
         EngineToggles.of(Side.COMMON, Group.WORLD_DATA).forEach(toggle -> assertEquals(When.NEW_WORLDS, toggle.when(), toggle.property()));
+    }
+
+    @Test void coarseDirtIsAnOnByDefaultNewWorldToggle() {
+        Toggle coarse = EngineToggles.ALL.stream().filter(toggle -> toggle.property().equals("earth.coarseDirt")).findAny().orElseThrow();
+        assertTrue(coarse.defaultValue(), "coarse dirt stays on unless a player turns it off");
+        assertEquals(When.NEW_WORLDS, coarse.when());
+        assertEquals(Side.COMMON, coarse.side());
     }
 
     @Test void flagsThatCannotWorkFromSettingsAloneAreNotOnSodiumsPage() {

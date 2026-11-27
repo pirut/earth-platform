@@ -20,12 +20,12 @@ final class Giants {
     static final int SEQUOIA = 0, REDWOOD = 1, FIR = 2;
     private static final int VARIANTS = 12;
     private static final BlockState LEAVES = Blocks.SPRUCE_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT, true),
-            PODZOL = Blocks.PODZOL.defaultBlockState(), COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
+            PODZOL = Blocks.PODZOL.defaultBlockState(), DIRT = Blocks.DIRT.defaultBlockState(), COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
     private static final BlockState[] BARK = {Blocks.MANGROVE_WOOD.defaultBlockState(), Blocks.MANGROVE_WOOD.defaultBlockState(), Blocks.SPRUCE_WOOD.defaultBlockState()},
             FURROW = {Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.SPRUCE_WOOD.defaultBlockState(), Blocks.DARK_OAK_WOOD.defaultBlockState()};
-    private record VariantKey(int form, BlockState bark, BlockState furrow, BlockState leaves) {}
+    private record VariantKey(int form, BlockState bark, BlockState furrow, BlockState leaves, boolean coarse) {}
 
-    private static final AtomicReferenceArray<TreeShape[]> shapes = new AtomicReferenceArray<>(3);
+    private static final AtomicReferenceArray<TreeShape[]> shapes = new AtomicReferenceArray<>(3), shapesNoCoarse = new AtomicReferenceArray<>(3);
     private static final java.util.concurrent.ConcurrentHashMap<VariantKey, TreeShape[]> customShapes = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final Long2ObjectOpenHashMap<BlockState> blocks = new Long2ObjectOpenHashMap<>();
@@ -42,26 +42,32 @@ final class Giants {
     }
 
     /** A form's giants, grown once. */
-    static TreeShape[] shapes(int form) {
-        TreeShape[] made = shapes.get(form);
+    static TreeShape[] shapes(int form) { return shapes(form, true); }
+
+    /** The same, with or without coarse dirt in the duff at their feet. */
+    static TreeShape[] shapes(int form, boolean coarseDirt) {
+        AtomicReferenceArray<TreeShape[]> cache = coarseDirt ? shapes : shapesNoCoarse;
+        TreeShape[] made = cache.get(form);
         if (made == null) synchronized (shapes) {
-            made = shapes.get(form);
+            made = cache.get(form);
             if (made == null) {
                 made = new TreeShape[VARIANTS];
-                for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form);
-                shapes.set(form, made);
+                for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form, BARK[form], FURROW[form], LEAVES, coarseDirt);
+                cache.set(form, made);
             }
         }
         return made;
     }
 
     /** A form's giants built from a custom wood and leaf palette (such as modded redwood or fir), grown once per palette. */
-    static TreeShape[] shapes(int form, BlockState bark, BlockState furrow, BlockState leaves) {
-        if (bark == BARK[form] && furrow == FURROW[form] && leaves == LEAVES) return shapes(form);
-        return customShapes.computeIfAbsent(new VariantKey(form, bark, furrow, leaves), k -> {
+    static TreeShape[] shapes(int form, BlockState bark, BlockState furrow, BlockState leaves) { return shapes(form, bark, furrow, leaves, true); }
+
+    static TreeShape[] shapes(int form, BlockState bark, BlockState furrow, BlockState leaves, boolean coarseDirt) {
+        if (bark == BARK[form] && furrow == FURROW[form] && leaves == LEAVES) return shapes(form, coarseDirt);
+        return customShapes.computeIfAbsent(new VariantKey(form, bark, furrow, leaves, coarseDirt), k -> {
             TreeShape[] made = new TreeShape[VARIANTS];
             for (int i = 0; i < VARIANTS; i++)
-                made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form, bark, furrow, leaves);
+                made[i] = grow(0x61A27L * (form + 1) + i * 0x9E3779B97F4A7C15L, form, bark, furrow, leaves, coarseDirt);
             return made;
         });
     }
@@ -71,9 +77,13 @@ final class Giants {
     }
 
     static TreeShape grow(long seed, int form, BlockState bark, BlockState furrow, BlockState leaves) {
+        return grow(seed, form, bark, furrow, leaves, true);
+    }
+
+    static TreeShape grow(long seed, int form, BlockState bark, BlockState furrow, BlockState leaves, boolean coarseDirt) {
         Giants tree = new Giants(seed, bark, furrow, leaves);
         double base = form == SEQUOIA ? tree.sequoia() : tree.spire(form == REDWOOD);
-        tree.duff(base);
+        tree.duff(base, coarseDirt);
         // Nothing past what a grove's cubes look for: 16 blocks from the axis, and Sequoia.TALLEST above the foot.
         tree.blocks.keySet().removeIf(key -> Math.abs(BlockPos.getX(key)) > Trees.REACH || Math.abs(BlockPos.getZ(key)) > Trees.REACH || BlockPos.getY(key) >= Sequoia.TALLEST);
         return new TreeShape(tree.blocks, 0);
@@ -258,11 +268,11 @@ final class Giants {
     }
 
     /** Duff of needles round the foot: podzol with a little coarse dirt, laid on the ground's own height. */
-    private void duff(double base) {
+    private void duff(double base, boolean coarseDirt) {
         int litter = (int) Math.ceil(base + 5);
         for (int dz = -litter; dz <= litter; dz++) for (int dx = -litter; dx <= litter; dx++) {
             if (Math.hypot(dx, dz) > base + 5 - random.nextDouble() * 2) continue;
-            blocks.put(BlockPos.asLong(dx, -1, dz), random.nextInt(6) == 0 ? COARSE_DIRT : PODZOL);
+            blocks.put(BlockPos.asLong(dx, -1, dz), random.nextInt(6) == 0 ? (coarseDirt ? COARSE_DIRT : DIRT) : PODZOL);
         }
     }
 

@@ -23,33 +23,38 @@ final class Sequoia {
     private static final BlockState LOG = Blocks.MANGROVE_LOG.defaultBlockState(),
             LEAVES = Blocks.SPRUCE_LEAVES.defaultBlockState(), PODZOL = Blocks.PODZOL.defaultBlockState(),
             COARSE_DIRT = Blocks.COARSE_DIRT.defaultBlockState();
-    private record VariantKey(BlockState log, BlockState leaves) {}
+    private record VariantKey(BlockState log, BlockState leaves, boolean coarse) {}
 
-    private static volatile TreeShape[] shapes;
+    private static volatile TreeShape[] shapes, shapesNoCoarse;
     private static final java.util.concurrent.ConcurrentHashMap<VariantKey, TreeShape[]> customShapes = new java.util.concurrent.ConcurrentHashMap<>();
 
     private Sequoia() {}
 
     /** The sequoias every grove picks from, grown once. */
-    static TreeShape[] shapes() {
-        TreeShape[] made = shapes;
+    static TreeShape[] shapes() { return shapes(true); }
+
+    /** The same, with or without coarse dirt in the duff at their feet. */
+    static TreeShape[] shapes(boolean coarseDirt) {
+        TreeShape[] made = coarseDirt ? shapes : shapesNoCoarse;
         if (made == null) synchronized (Sequoia.class) {
-            made = shapes;
+            made = coarseDirt ? shapes : shapesNoCoarse;
             if (made == null) {
                 made = new TreeShape[VARIANTS];
-                for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L);
-                shapes = made;
+                for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L, LOG, LEAVES, coarseDirt);
+                if (coarseDirt) shapes = made; else shapesNoCoarse = made;
             }
         }
         return made;
     }
 
     /** Sequoias built from a custom log/wood and leaf palette (such as modded redwood), grown once per palette. */
-    static TreeShape[] shapes(BlockState log, BlockState leaves) {
-        if (log == LOG && leaves == LEAVES) return shapes();
-        return customShapes.computeIfAbsent(new VariantKey(log, leaves), k -> {
+    static TreeShape[] shapes(BlockState log, BlockState leaves) { return shapes(log, leaves, true); }
+
+    static TreeShape[] shapes(BlockState log, BlockState leaves, boolean coarseDirt) {
+        if (log == LOG && leaves == LEAVES) return shapes(coarseDirt);
+        return customShapes.computeIfAbsent(new VariantKey(log, leaves, coarseDirt), k -> {
             TreeShape[] made = new TreeShape[VARIANTS];
-            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L, log, leaves);
+            for (int i = 0; i < VARIANTS; i++) made[i] = grow(0x5E9A01AL * 31 + i * 0x9E3779B97F4A7C15L, log, leaves, coarseDirt);
             return made;
         });
     }
@@ -73,6 +78,10 @@ final class Sequoia {
     }
 
     static TreeShape grow(long seed, BlockState logBlock, BlockState leafBlock) {
+        return grow(seed, logBlock, leafBlock, true);
+    }
+
+    static TreeShape grow(long seed, BlockState logBlock, BlockState leafBlock, boolean coarseDirt) {
         RandomSource random = RandomSource.create(seed);
         int height = 70 + random.nextInt(25);
         double base = 3.0 + random.nextDouble() * 1.4;
@@ -119,7 +128,7 @@ final class Sequoia {
         for (int dz = -litter; dz <= litter; dz++) for (int dx = -litter; dx <= litter; dx++) {
             double d = Math.sqrt(dx * dx + dz * dz);
             if (d > base + 5 - random.nextDouble() * 2) continue;
-            blocks.put(BlockPos.asLong(dx, -1, dz), random.nextInt(6) == 0 ? COARSE_DIRT : PODZOL);
+            blocks.put(BlockPos.asLong(dx, -1, dz), random.nextInt(6) == 0 ? (coarseDirt ? COARSE_DIRT : Blocks.DIRT.defaultBlockState()) : PODZOL);
         }
         leafDistances(blocks);
         return new TreeShape(blocks, 0);

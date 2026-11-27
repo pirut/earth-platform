@@ -426,9 +426,10 @@ final class Trees {
                 if (h - foot > 6) continue;
                 int form = gen.giantForm(x, z);
                 BlockState[] palette = gen.giantBlocks(form < 0 ? Giants.SEQUOIA : form);
+                boolean coarse = gen.coarseDirt();
                 TreeShape[] grown = form < 0
-                        ? (palette == null ? Sequoia.shapes() : Sequoia.shapes(palette[0], palette[2]))
-                        : (palette == null ? Giants.shapes(form) : Giants.shapes(form, palette[0], palette[1], palette[2]));
+                        ? (palette == null ? Sequoia.shapes(coarse) : Sequoia.shapes(palette[0], palette[2], coarse))
+                        : (palette == null ? Giants.shapes(form, coarse) : Giants.shapes(form, palette[0], palette[1], palette[2], coarse));
                 trees.add(new Planted(x, foot + 1, z, grown[(int) Math.floorMod(r >>> 32, grown.length)], (int) (r >>> 50 & 3), r, snowy(surface), false));
             }
         Planted[] made = trees.isEmpty() ? NONE : trees.toArray(Planted[]::new);
