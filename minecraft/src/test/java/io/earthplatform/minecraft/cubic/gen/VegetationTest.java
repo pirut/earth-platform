@@ -124,6 +124,18 @@ class VegetationTest {
         assertNotNull(Trees.tree(Holder.direct(oak)), "vanilla trees must still be accepted");
     }
 
+    @Test void treeLikeExcludesHugeMushroomsButKeepsTrees() {
+        SurfacePacketFixtures.biomes();
+        var cap = BlockStateProvider.simple(Blocks.RED_MUSHROOM_BLOCK);
+        var stem = BlockStateProvider.simple(Blocks.MUSHROOM_STEM);
+        assertFalse(Trees.treeLike(new ConfiguredFeature<>(Feature.HUGE_RED_MUSHROOM, new HugeMushroomFeatureConfiguration(cap, stem, 2))));
+        assertFalse(Trees.treeLike(new ConfiguredFeature<>(Feature.HUGE_BROWN_MUSHROOM, new HugeMushroomFeatureConfiguration(cap, stem, 2))));
+        assertTrue(Trees.treeLike(new ConfiguredFeature<>(Feature.TREE, new TreeConfiguration.TreeConfigurationBuilder(
+                BlockStateProvider.simple(Blocks.OAK_LOG), new StraightTrunkPlacer(4, 2, 0),
+                BlockStateProvider.simple(Blocks.OAK_LEAVES), new BlobFoliagePlacer(ConstantInt.of(2), ConstantInt.of(0), 3),
+                new TwoLayersFeatureSize(1, 0, 1)).build())));
+    }
+
     @Test void treesGrowFallsBackWhenThirdPartyModBreaksTreeFeaturePlace() {
         var biomes = SurfacePacketFixtures.biomes();
         var generator = new SurfaceGenerator(0, biomes, RandomSource.create(0)) {

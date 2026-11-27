@@ -241,6 +241,8 @@ class EarthShorelineTest {
         private final DoubleBinaryOperator elevationAt;
         private final IntBinaryOperator coverAt;
         final java.util.concurrent.atomic.AtomicInteger terrariumRequests = new java.util.concurrent.atomic.AtomicInteger();
+        /** Zoom of the deepest elevation tile requested; coarse previews must stay at preview-level zooms. */
+        final java.util.concurrent.atomic.AtomicInteger maxTerrariumZoom = new java.util.concurrent.atomic.AtomicInteger();
         private final ConcurrentHashMap<String, byte[]> pngCache = new ConcurrentHashMap<>();
         private final byte[] tiffHeader;
         private final int[][] blockMeta; // [globalId] -> {overview, tileRow, tileCol}
@@ -286,6 +288,8 @@ class EarthShorelineTest {
         private void serveTerrarium(HttpExchange exchange) throws IOException {
             terrariumRequests.incrementAndGet();
             String path = exchange.getRequestURI().getPath();
+            try { maxTerrariumZoom.accumulateAndGet(Integer.parseInt(path.substring("/terrarium/".length()).split("/")[0]), Math::max); }
+            catch (RuntimeException ignored) { }
             String key = path.substring("/terrarium/".length());
             byte[] png = pngCache.computeIfAbsent(key, this::renderTerrariumTile);
             exchange.getResponseHeaders().set("Content-Type", "image/png");

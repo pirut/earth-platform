@@ -496,8 +496,8 @@ class EarthSurfaceRulesTest {
             EarthGenerator gen = world.generator;
             Surface coarse = gen.surface(world.homeX, world.homeZ, gen.seaLevel() + 1, EarthGenerator.DRY, 0, 64, null);
             assertNotNull(coarse);
-            assertEquals(0, world.terrariumRequests.get(),
-                    "coarse far LOD (voxel=64) dry WATER pixel must not trigger fine-resolution seaSurrounded/waterY elevation fetches");
+            assertTrue(world.maxTerrariumZoom.get() <= 9,
+                    "coarse far LOD (voxel=64) dry WATER pixel must not trigger fine-resolution seaSurrounded/waterY elevation fetches, deepest zoom=" + world.maxTerrariumZoom.get());
             assertTrue(coarse.biome().is(Biomes.MANGROVE_SWAMP) || coarse.biome().is(Biomes.SWAMP),
                     "coarse far LOD mangrove estuary pixel should keep marshyFallback without calling seaSurrounded, got " + coarse.biome());
         }
@@ -659,5 +659,87 @@ class EarthSurfaceRulesTest {
     private static double linear(int srgb) {
         double c = srgb / 255.0;
         return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    @Test
+    void warmHumidCoastNextToOpenSeaStaysWoodsWhileInlandFloodplainKeepsBayou() throws Exception {
+        // Carolinas coast: a warm, wet temperate broadleaf ecoregion with the sea to the west of the home column.
+        double lat = Double.NaN, lon = Double.NaN;
+        for (double[] c : new double[][]{{35.5, -78.0}, {34.0, -80.5}, {36.0, -80.0}, {35.0, -85.0}, {38.0, -90.0}, {32.5, -84.0}, {37.0, -77.5}})
+            if (Ecoregions.get().biome(Ecoregions.get().ecoregion(c[0], c[1])) == Ecoregions.TEMPERATE_BROADLEAF) { lat = c[0]; lon = c[1]; break; }
+        assertFalse(Double.isNaN(lat), "a temperate broadleaf ecoregion fixture site must exist");
+        var warmWet = new EarthGenerator.Local(ClimateZone.SUBTROPICAL, 17.5, 26.0, 1300, ClimateSource.ET);
+        int coastalBayou = 0, inlandBayou = 0;
+        try (var coast = new EarthShorelineTest.SyntheticWorld(biomes, lat, lon,
+                (dx, dz) -> dx <= -2 ? -5.0 : 2.0, (dx, dz) -> dx <= -2 ? WorldCoverSource.WATER : WorldCoverSource.TREE_COVER);
+             var inland = new EarthShorelineTest.SyntheticWorld(biomes, lat, lon,
+                (dx, dz) -> 2.0, (dx, dz) -> WorldCoverSource.TREE_COVER)) {
+            for (int dz = 0; dz < 400; dz += 3) {
+                var c = coast.generator.covered(WorldCoverSource.TREE_COVER, coast.homeX + 4, coast.homeZ + dz,
+                        coast.generator.seaLevel() + 2, warmWet, 0.1, 50, 1, 1);
+                if (c != null && c.biome().is(Biomes.SWAMP)) coastalBayou++;
+                var i = inland.generator.covered(WorldCoverSource.TREE_COVER, inland.homeX + 4, inland.homeZ + dz,
+                        inland.generator.seaLevel() + 2, warmWet, 0.1, 50, 1, 1);
+                if (i != null && i.biome().is(Biomes.SWAMP)) inlandBayou++;
+            }
+        }
+        assertEquals(0, coastalBayou, "tree cover right next to the open sea must not become muddy swamp");
+        assertTrue(inlandBayou > 0, "inland floodplain tree cover must still be able to become bayou");
+    }
+
+    private int bayouCount(EarthShorelineTest.SyntheticWorld w, EarthGenerator.Local climate, int voxel, int quickLevel) {
+        int n = 0;
+        w.generator.previewing(quickLevel);
+        try {
+            for (int dz = 0; dz < 400; dz += 3) {
+                var c = w.generator.covered(WorldCoverSource.TREE_COVER, w.homeX + 4, w.homeZ + dz,
+                        w.generator.seaLevel() + 2, climate, 0.1, 50, 1, voxel);
+                if (c != null && c.biome().is(Biomes.SWAMP)) n++;
+            }
+        } finally {
+            w.generator.previewing(0);
+        }
+        return n;
+    }
+
+    private double[] broadleafSite() {
+        for (double[] c : new double[][]{{35.5, -78.0}, {34.0, -80.5}, {36.0, -80.0}, {35.0, -85.0}, {38.0, -90.0}, {32.5, -84.0}, {37.0, -77.5}})
+            if (Ecoregions.get().biome(Ecoregions.get().ecoregion(c[0], c[1])) == Ecoregions.TEMPERATE_BROADLEAF) return c;
+        throw new AssertionError("a temperate broadleaf ecoregion fixture site must exist");
+    }
+
+    @Test
+    void narrowInletStillCountsAsCoastForBayou() throws Exception {
+        double[] site = broadleafSite();
+        var warmWet = new EarthGenerator.Local(ClimateZone.SUBTROPICAL, 17.5, 26.0, 1300, ClimateSource.ET);
+        // A nine-block-wide arm of sea, 4 to 12 blocks west of the sample column: nothing at 32 or 64 blocks out sees it.
+        try (var w = new EarthShorelineTest.SyntheticWorld(biomes, site[0], site[1],
+                (dx, dz) -> dx >= -12 && dx <= -4 ? -5.0 : 2.0,
+                (dx, dz) -> dx >= -12 && dx <= -4 ? WorldCoverSource.WATER : WorldCoverSource.TREE_COVER)) {
+            assertEquals(0, bayouCount(w, warmWet, 1, 0), "a narrow sea inlet beside tree cover must still veto muddy swamp");
+        }
+    }
+
+    @Test
+    void quickAndCoarseInlandLakeKeepsBayouWithoutFullHydrology() throws Exception {
+        double[] site = broadleafSite();
+        var warmWet = new EarthGenerator.Local(ClimateZone.SUBTROPICAL, 17.5, 26.0, 1300, ClimateSource.ET);
+        // A freshwater lake 10 m up, beside the floodplain: mapped water but not the sea.
+        try (var w = new EarthShorelineTest.SyntheticWorld(biomes, site[0], site[1],
+                (dx, dz) -> dx <= -2 ? 10.0 : 11.0, (dx, dz) -> dx <= -2 ? WorldCoverSource.WATER : WorldCoverSource.TREE_COVER)) {
+            assertTrue(bayouCount(w, warmWet, 1, 5) > 0, "quick preview next to an inland lake must keep bayou");
+            assertTrue(bayouCount(w, warmWet, 64, 0) > 0, "coarse voxels next to an inland lake must keep bayou");
+        }
+    }
+
+    @Test
+    void darkOldGrowthGrovesOnlyOnDeepNegativePatches() {
+        var oceanic = new EarthGenerator.Local(ClimateZone.OCEANIC, 9.0, 14.0, 1200, ClimateSource.ET);
+        assertTrue(EarthGenerator.OLD_GROVE_PATCH <= -0.65, "dark groves must be rare pockets");
+        var vanilla = ModdedBiomes.resolve(biomes, false);
+        var mild = earth.groves(-0.5, 0, 0, oceanic, null, vanilla);
+        assertTrue(mild == null || !mild.biome().is(Biomes.DARK_FOREST), "a moderately negative patch must no longer be dark forest");
+        assertTrue(earth.groves(-0.8, 0, 0, oceanic, null, vanilla).biome().is(Biomes.DARK_FOREST),
+                "a deeply negative patch is still a dark old grove");
     }
 }
