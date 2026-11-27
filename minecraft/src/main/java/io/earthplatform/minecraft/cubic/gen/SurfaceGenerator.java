@@ -20,6 +20,7 @@ import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.HugeMushroomBlock;
@@ -177,6 +178,11 @@ public abstract class SurfaceGenerator implements CubeGenerator {
 
     /** Whether the water over a column is iced over: by default wherever its biome freezes. */
     protected boolean iced(Surface surface, int x, int z) { return surface.biome().value().getBaseTemperature() < 0.15f; }
+    /** Whether submerged plants grow in open water; frozen oceans stay bare even between ice floes. */
+    protected boolean underwaterPlants(Surface surface, int x, int z) {
+        return !surface.biome().is(Biomes.FROZEN_OCEAN) && !surface.biome().is(Biomes.DEEP_FROZEN_OCEAN);
+    }
+
     /** The rock layers a column shows in its cliff faces, or null for plain stone. */
     protected Strata.Layers layers(int x, int z) { return null; }
 

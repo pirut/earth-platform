@@ -33,6 +33,55 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VegetationTest {
+    @Test void freezingOceanColumnsStayBareWhileTemperateColdOceansKeepKelp() {
+        var biomes = SurfacePacketFixtures.biomes();
+        for (var biome : List.of(Biomes.COLD_OCEAN, Biomes.DEEP_COLD_OCEAN,
+                Biomes.FROZEN_OCEAN, Biomes.DEEP_FROZEN_OCEAN)) {
+            for (int mode = 0; mode < 3; mode++) {
+                boolean iced = mode == 1, freezing = mode == 2;
+                var bed = Blocks.GRAVEL.defaultBlockState();
+                var ocean = new SurfaceGenerator.Surface(biomes.getHolderOrThrow(biome), bed, bed,
+                        0, 0, 0, 0, 0, false);
+                var generator = new SurfaceGenerator(42, biomes, RandomSource.create(42)) {
+                    @Override protected void ground(int x, int z, int[] out) { out[0] = 0; out[1] = 15; }
+                    @Override protected Surface surface(int x, int z, int ground, int water, int slope) { return ocean; }
+                    @Override protected boolean iced(Surface s, int x, int z) { return iced; }
+                    @Override protected boolean underwaterPlants(Surface s, int x, int z) {
+                        return !freezing && super.underwaterPlants(s, x, z);
+                    }
+                    @Override public String id() { return "test_ocean_plants"; }
+                    @Override public int seaLevel() { return 15; }
+                    @Override protected int shoreLevel() { return 15; }
+                    @Override protected boolean emeralds(int maxGround) { return false; }
+                };
+                int[] height = new int[18 * 18], water = new int[18 * 18];
+                Arrays.fill(water, 15);
+                var surfaces = new SurfaceGenerator.Surface[256];
+                Arrays.fill(surfaces, ocean);
+                var section = new LevelChunkSection(biomes);
+                for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) {
+                    section.setBlockState(x, 0, z, bed, false);
+                    for (int y = 1; y <= 15; y++) section.setBlockState(x, y, z, Blocks.WATER.defaultBlockState(), false);
+                }
+                new Vegetation(generator).decorate(section, 0, 0, 0, height, water, surfaces);
+                int kelp = 0, grass = 0;
+                for (int z = 0; z < 16; z++) for (int x = 0; x < 16; x++) for (int y = 1; y <= 15; y++) {
+                    var block = section.getBlockState(x, y, z);
+                    if (block.is(Blocks.KELP) || block.is(Blocks.KELP_PLANT)) kelp++;
+                    if (block.is(Blocks.SEAGRASS) || block.is(Blocks.TALL_SEAGRASS)) grass++;
+                    if (iced && y == 15) assertTrue(block.is(Blocks.ICE));
+                }
+                if (iced || freezing || biome == Biomes.FROZEN_OCEAN || biome == Biomes.DEEP_FROZEN_OCEAN) {
+                    assertEquals(0, kelp, biome + " must have no kelp in mode " + mode);
+                    assertEquals(0, grass, biome + " must have no seagrass in mode " + mode);
+                } else {
+                    assertTrue(kelp > 0, "temperate cold ocean must retain kelp");
+                    assertTrue(grass > 0, "temperate cold ocean must retain seagrass");
+                }
+            }
+        }
+    }
+
     @Test void sandyColumnsObserveTheGeneratorCactusRange() {
         var biomes = SurfacePacketFixtures.biomes();
         var sand = Blocks.RED_SAND.defaultBlockState();
