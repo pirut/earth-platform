@@ -167,6 +167,8 @@ public final class CubicSettings {
                 if (!forestsId.isEmpty() && !ForestTypes.ID.equals(forestsId))
                     throw new IllegalStateException("Unsupported forest types '" + forestsId + "' in " + file);
                 if (!forestsId.isEmpty()) earth.enableForestTypes();
+                // Worlds keep coarse dirt unless they were made with it off.
+                if (!coarseDirt(properties)) earth.disableCoarseDirt();
                 yield earth;
             }
             default -> throw new IllegalStateException("Unknown cubic generator '" + id + "' in " + file);
@@ -215,9 +217,17 @@ public final class CubicSettings {
         if (!"false".equals(System.getProperty("earthplatform.earth.maps"))) properties.setProperty("earth.maps", EarthMaps.ID);
         if (!"false".equals(System.getProperty("earthplatform.earth.realms"))) properties.setProperty("earth.plants", PLANT_REALMS);
         if (!"false".equals(System.getProperty("earthplatform.earth.forests"))) properties.setProperty("earth.forests", ForestTypes.ID);
+        // Pinned only when off, so a world made without the setting, or with it on, has no such line and keeps coarse dirt.
+        if (!coarseDirtOn()) properties.setProperty("earth.coarseDirt", "false");
         if (imageryEnabled()) properties.setProperty("earth.imagery", ImagerySource.DATASET_ID);
         if (!name.isEmpty()) properties.setProperty("earth.homeName", name);
     }
+
+    /** Whether new worlds get coarse dirt: they do unless {@code -Dearthplatform.earth.coarseDirt=false} (or its setting) says not. */
+    private static boolean coarseDirtOn() { return !"false".equals(System.getProperty("earthplatform.earth.coarseDirt")); }
+
+    /** Whether a world's pinned settings keep coarse dirt: they do unless {@code earth.coarseDirt} is {@code false}. */
+    static boolean coarseDirt(Properties properties) { return !"false".equals(properties.getProperty("earth.coarseDirt")); }
 
     private static void store(Path folder, Properties properties) throws IOException {
         Files.createDirectories(folder);

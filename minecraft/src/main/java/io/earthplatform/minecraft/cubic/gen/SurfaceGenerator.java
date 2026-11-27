@@ -81,6 +81,8 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     private final ConcurrentHashMap<Long, Column> columns = new ConcurrentHashMap<>();
     private final Vegetation vegetation = new Vegetation(this);
     @Nullable private volatile TerrainSlabs terrainSlabs;
+    /** Whether coarse dirt may generate; worlds keep it unless they pinned it off. */
+    private volatile boolean coarseDirt = true;
 
     /** Cave noise is drawn from {@code random} after whatever the subclass drew from it. */
     protected SurfaceGenerator(long seed, Registry<Biome> biomes, RandomSource random) {
@@ -98,6 +100,12 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     public final void legacyCaves() { below.vanillaCaves(false); }
     /** Adds optional half-block steps to a world that pinned them before its first cube. */
     public final void enableTerrainSlabs() { terrainSlabs = TerrainSlabs.load(); }
+    /** Leaves coarse dirt out of a world that pinned it off before its first cube: natural soil, grass and podzol take its place. */
+    public final void disableCoarseDirt() { coarseDirt = false; onCoarseDirtOff(); }
+    /** Whether this world generates coarse dirt (it does unless pinned off). */
+    public final boolean coarseDirt() { return coarseDirt; }
+    /** Lets a subclass reach its own parts when coarse dirt is turned off. */
+    protected void onCoarseDirtOff() {}
     protected static Holder<Biome> holder(Registry<Biome> registry, ResourceKey<Biome> key) { return registry.getHolderOrThrow(key); }
 
     /** Fractal noise: {@code octaves} layers of {@code noise}, each half as strong and 2.03x as fine, averaged by weight. */
