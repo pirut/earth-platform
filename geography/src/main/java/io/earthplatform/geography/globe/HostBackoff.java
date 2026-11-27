@@ -311,6 +311,12 @@ public final class HostBackoff {
                 what, host, why);
     }
 
+    /** Sorted, deduplicated host keys currently in outage backoff (including a probe in flight). */
+    public static List<String> downHosts() {
+        return HEALTH.entrySet().stream().filter(entry -> entry.getValue().downFor != 0)
+                .map(Map.Entry::getKey).sorted().toList();
+    }
+
     /** Whether any data host is down now. */
     public static boolean anyDown() {
         for (Health health : HEALTH.values()) if (health.downFor != 0) return true;

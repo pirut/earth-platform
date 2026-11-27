@@ -31,6 +31,30 @@ import org.junit.jupiter.api.io.TempDir;
 class HostBackoffAndRangeFilesTest {
 
     @Test
+    void downHostsListsEachAuthorityOnceInOrderAndClearsOnRecovery() {
+        URI a = URI.create("https://a.down-hosts-test.invalid:8443/one");
+        URI z = URI.create("https://z.down-hosts-test.invalid/one");
+        try {
+            HostBackoff.failed(z, "Test", new java.net.http.HttpConnectTimeoutException("test"));
+            HostBackoff.failed(a, "Test", new java.net.http.HttpConnectTimeoutException("test"));
+            HostBackoff.failed(a.resolve("two"), "Test", new java.net.http.HttpConnectTimeoutException("test"));
+            var hosts = HostBackoff.downHosts();
+            assertTrue(hosts.contains(HostBackoff.hostKey(a)));
+            assertTrue(hosts.contains(HostBackoff.hostKey(z)));
+            assertEquals(hosts.stream().distinct().sorted().toList(), hosts);
+            assertEquals(1, hosts.stream().filter(HostBackoff.hostKey(a)::equals).count());
+            HostBackoff.answered(a.resolve("healthy"));
+            assertFalse(HostBackoff.downHosts().contains(HostBackoff.hostKey(a)));
+            assertTrue(HostBackoff.downHosts().contains(HostBackoff.hostKey(z)));
+            HostBackoff.answered(z);
+            assertFalse(HostBackoff.downHosts().contains(HostBackoff.hostKey(z)));
+        } finally {
+            HostBackoff.clear(a);
+            HostBackoff.clear(z);
+        }
+    }
+
+    @Test
     void hostBackoffCanonicalPathsSeparate5xxFromTransportAndRotatesRecoveryProbes() throws Exception {
         AtomicInteger goodHits = new AtomicInteger();
         AtomicBoolean goodFailing = new AtomicBoolean(false);
@@ -641,7 +665,6 @@ class HostBackoffAndRangeFilesTest {
             ((ExecutorService) server.getExecutor()).shutdownNow();
         }
     }
-
 
     @Test
     void recoveryProbeStalledBodyAbortsAtDeadlineAndAlternatingRequestsRotateStably() throws Exception {

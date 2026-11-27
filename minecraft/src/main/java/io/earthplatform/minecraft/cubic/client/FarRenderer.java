@@ -716,6 +716,7 @@ public final class FarRenderer {
         if (gpu == null && !unsupported) {
             if (!FarGpu.supported()) {
                 unsupported = true;
+                FarTerrainNotices.request(FarTerrainNotice.Reason.UNSUPPORTED_GL);
                 EarthPlatformMod.LOGGER.warn("Far terrain needs buffer textures, integer uniforms and multi-draw; it is off");
                 return null;
             }

@@ -29,6 +29,8 @@
   "earthplatform.arrival.offlineMode.hint": "Turn off offline mode in Mods > Earth Platform > Config, then restart the game, so this place can be downloaded.",
   "earthplatform.arrival.waited": "Waiting %s s",
   "earthplatform.arrival.leave": "Leave world",
+  "earthplatform.far.disabled.opengl": "Earth Platform: distant terrain is off because your GPU/driver is missing required OpenGL capabilities. Only the game's render distance is visible. Update your graphics driver; if this persists, use /earth bug and include logs/latest.log.",
+  "earthplatform.far.disabled.shader": "Earth Platform: distant terrain could not draw because its shader failed to build. Only the game's render distance is visible for this rendering mode. Check your GPU/driver or try disabling your shader pack, then use /earth bug and include logs/latest.log if needed.",
   "earthplatform.status.downloading": "Downloading Earth data%s",
   "earthplatform.status.unreachable": "Can't reach the Earth data servers",
   "earthplatform.status.unreachable.hint": "Places you've visited still work. New ground fills in when you're back online.",
