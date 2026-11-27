@@ -235,7 +235,7 @@
   "earthplatform.configuration.earthForests": "Forest types from map",
   "earthplatform.configuration.earthForests.tooltip": "New worlds grow conifer, broadleaf, evergreen or deciduous woods where the Copernicus forest type map shows them. Off picks forests by climate alone. Applies to worlds you make after changing it.",
   "earthplatform.configuration.earthCoarseDirt": "Coarse dirt",
-  "earthplatform.configuration.earthCoarseDirt.tooltip": "Brown coarse dirt patches in dry grassland, scrub, woods and beside giant trees. Off makes new worlds use grass, plain dirt, sand and podzol there instead. Applies to worlds you make after changing it.",
+  "earthplatform.configuration.earthCoarseDirt.tooltip": "Brown coarse dirt patches in dry grassland, scrub, woods and beside giant trees. Off makes new worlds use grass, plain dirt and podzol there instead. Applies to worlds you make after changing it.",
   "earthplatform.configuration.farPreviews": "Far terrain stand-ins",
   "earthplatform.configuration.farPreviews.tooltip": "The server makes quick stand-ins for far columns and sends them first; the client shows them until the real columns arrive. Off on a server makes none; off on a client asks for none, so far terrain comes in without them. Restart the game to apply.",
   "earthplatform.configuration.cubicFlightSurface": "Experimental: low-flight cubes",
