@@ -160,6 +160,9 @@ public abstract class SurfaceGenerator implements CubeGenerator {
     /** Whether trees' bare log ends at the top of their crowns are covered with leaves; worlds made before build 70 keep vanilla's. */
     protected boolean cappedCrowns() { return false; }
 
+    /** Whether palms that other mods add to a biome may grow at a column; true unless the generator knows it is too cold. */
+    protected boolean palmsGrow(int x, int z, int y) { return true; }
+
     /** Whether custom regional tree shapes are grown where the world chooses them, rather than vanilla shapes alone. */
     protected boolean customTrees() { return false; }
 

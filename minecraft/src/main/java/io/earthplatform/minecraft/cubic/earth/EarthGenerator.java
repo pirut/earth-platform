@@ -5035,6 +5035,7 @@ public final class EarthGenerator extends SurfaceGenerator {
     }
 
     private Surface beachSurface(int x, int z, double t, double steep, boolean dune, int palms, ModdedBiomes modded) {
+        if (t < PALM_MIN_TEMPERATURE) palms = 0;
         if (modded.hasBlackSand() && (volcanic(x, z) || maps != null && EarthMaps.volcanic(rock(x, z))))
             return beachWithPalms(t < 0 ? snowyBeach : beach, modded.blackSand, t < 0 ? 0 : palms);
         if (t < 0) return new Surface(snowyBeach, SAND, SAND, 0, 0, 0, 0, 0, false);
@@ -5652,6 +5653,12 @@ public final class EarthGenerator extends SurfaceGenerator {
 
     @Override protected boolean cappedCrowns() { return canopy != null; }
 
+    /** Palms other mods add to a biome grow only where the climate allows, by the same rule as the regional ones. */
+    @Override protected boolean palmsGrow(int x, int z, int y) {
+        Local local = local(x, z, y);
+        return palmClimate(local.zone(), local.temperature());
+    }
+
     @Override protected boolean customTrees() { return customTreesOverride != null ? customTreesOverride : EarthConfig.customTrees(); }
 
     @Override @Nullable protected RegionalTrees.Species regionalTree(int x, int z, int y, Surface surface, Tree kind, long roll) {
@@ -5672,6 +5679,30 @@ public final class EarthGenerator extends SurfaceGenerator {
      * or null to grow vanilla's tree shape for natural multi-layered variety.
      */
     @Nullable static RegionalTrees.Species chooseRegionalTree(
+            @Nullable ClimateZone zone, double temperature, int ecoBiome, int realm,
+            boolean coastal, boolean sandy, boolean lowland,
+            Holder<Biome> biome, Tree kind, int chance) {
+        RegionalTrees.Species species = pickRegionalTree(zone, temperature, ecoBiome, realm, coastal, sandy, lowland, biome, kind, chance);
+        return species == RegionalTrees.Species.PALM && !palmClimate(zone, temperature) ? null : species;
+    }
+
+    /** Annual mean temperature, in C, below which no palm grows, and the warmth a palm needs where the zone is unknown. */
+    static final double PALM_MIN_TEMPERATURE = 12, PALM_UNKNOWN_ZONE_TEMPERATURE = 18;
+
+    /**
+     * Whether a climate is warm enough for palms, wherever the rules above would plant one: never in a polar, subpolar
+     * or boreal zone, never under {@link #PALM_MIN_TEMPERATURE} C, and, where the temperature is unknown, only in a
+     * zone that is warm outright (Iceland's coasts hold no palms for want of climate data).
+     */
+    static boolean palmClimate(@Nullable ClimateZone zone, double temperature) {
+        if (zone == ClimateZone.SUBPOLAR_OCEANIC || zone == ClimateZone.SUBARCTIC
+                || zone == ClimateZone.TUNDRA || zone == ClimateZone.ICE) return false;
+        if (Double.isFinite(temperature))
+            return temperature >= (zone == null ? PALM_UNKNOWN_ZONE_TEMPERATURE : PALM_MIN_TEMPERATURE);
+        return zone == ClimateZone.RAINFOREST || zone == ClimateZone.TROPICAL_DRY || zone == ClimateZone.HOT_DESERT;
+    }
+
+    @Nullable private static RegionalTrees.Species pickRegionalTree(
             @Nullable ClimateZone zone, double temperature, int ecoBiome, int realm,
             boolean coastal, boolean sandy, boolean lowland,
             Holder<Biome> biome, Tree kind, int chance) {

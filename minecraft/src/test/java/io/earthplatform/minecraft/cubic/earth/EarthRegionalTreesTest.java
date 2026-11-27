@@ -2,6 +2,7 @@ package io.earthplatform.minecraft.cubic.earth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +42,38 @@ class EarthRegionalTreesTest {
         assertEquals(RegionalTrees.Species.PALM, EarthGenerator.chooseRegionalTree(
                 ClimateZone.HOT_DESERT, 29, Ecoregions.DESERT, Ecoregions.PALEARCTIC,
                 false, false, true, savanna, SurfaceGenerator.Tree.ACACIA, 10));
+
+        // Cold coasts (Iceland) grow no palms, however the beach is reached, and unknown climate data grows none either.
+        for (ClimateZone cold : new ClimateZone[] {ClimateZone.SUBPOLAR_OCEANIC, ClimateZone.OCEANIC, ClimateZone.SUBARCTIC, ClimateZone.TUNDRA}) {
+            for (int c = 0; c < 100; c++) {
+                for (boolean sandy : new boolean[] {true, false}) {
+                    for (var kind : new SurfaceGenerator.Tree[] {SurfaceGenerator.Tree.JUNGLE, SurfaceGenerator.Tree.OAK}) {
+                        assertNotEquals(RegionalTrees.Species.PALM, EarthGenerator.chooseRegionalTree(
+                                cold, 3, Ecoregions.NONE, Ecoregions.NO_REALM, true, sandy, true, beach, kind, c), cold + " 3C");
+                    }
+                }
+            }
+        }
+        for (int c = 0; c < 100; c++) {
+            assertNull(EarthGenerator.chooseRegionalTree(null, Double.NaN, Ecoregions.NONE, Ecoregions.NO_REALM,
+                    true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, c), "unknown climate beach");
+            assertNull(EarthGenerator.chooseRegionalTree(null, 3, Ecoregions.NONE, Ecoregions.NO_REALM,
+                    true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, c), "cold beach without a zone");
+        }
+        assertEquals(RegionalTrees.Species.PALM, EarthGenerator.chooseRegionalTree(null, 26, Ecoregions.NONE, Ecoregions.NO_REALM,
+                true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, 50));
+        for (ClimateZone warm : new ClimateZone[] {ClimateZone.RAINFOREST, ClimateZone.TROPICAL_DRY, ClimateZone.HOT_DESERT}) {
+            assertEquals(RegionalTrees.Species.PALM, EarthGenerator.chooseRegionalTree(warm, 26, Ecoregions.NONE, Ecoregions.NO_REALM,
+                    true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, 50), warm + " beach");
+            assertEquals(RegionalTrees.Species.PALM, EarthGenerator.chooseRegionalTree(warm, Double.NaN, Ecoregions.NONE, Ecoregions.NO_REALM,
+                    true, true, true, beach, SurfaceGenerator.Tree.JUNGLE, 50), warm + " beach, no temperature");
+        }
+
+        // A mod-added palm (biomeswevegone:palm_trees) is gated by the same rule: rejected cold, allowed warm.
+        assertFalse(EarthGenerator.palmClimate(ClimateZone.SUBPOLAR_OCEANIC, 3));
+        assertFalse(EarthGenerator.palmClimate(ClimateZone.OCEANIC, 8));
+        assertFalse(EarthGenerator.palmClimate(null, 3));
+        assertTrue(EarthGenerator.palmClimate(ClimateZone.RAINFOREST, 26));
 
         // Boreal taiga -> BOREAL_PINE
         assertEquals(RegionalTrees.Species.BOREAL_PINE, EarthGenerator.chooseRegionalTree(
