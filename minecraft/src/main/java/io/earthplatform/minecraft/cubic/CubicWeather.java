@@ -28,7 +28,9 @@ public final class CubicWeather {
      * the biome's own temperature, with no cooling for height. Anywhere else it is vanilla's answer.
      */
     public static boolean warmEnoughToRain(LevelReader level, Biome biome, boolean vanilla) {
-        return level instanceof Level l && CubicLevel.of(l) != null ? warmEnough(biome.getBaseTemperature()) : vanilla;
+        // Vanilla only cools above Y 80 and never warms below it, except the FROZEN modifier's warm
+        // ocean patches, which already read as rain. Keep those; only lift a false in a cubic level.
+        return vanilla || (level instanceof Level l && CubicLevel.of(l) != null && warmEnough(biome.getBaseTemperature()));
     }
 
     /** The temperature line itself, the same one {@link #precipitation} uses. */

@@ -27,4 +27,13 @@ class CubicWeatherTest {
         assertTrue(CubicWeather.warmEnoughToRain(null, null, true));
         assertFalse(CubicWeather.warmEnoughToRain(null, null, false));
     }
+
+    @Test
+    void frozenOceanWarmPatchesStayWarm() {
+        // frozen_ocean has base 0.0 so it is cold, but vanilla's FROZEN modifier warms some patches
+        // (vanilla == true). Those keep true; a cold patch (vanilla == false) stays false.
+        assertFalse(CubicWeather.warmEnough(0.0F));
+        assertTrue(CubicWeather.warmEnoughToRain(null, null, true));
+        assertFalse(CubicWeather.warmEnoughToRain(null, null, false));
+    }
 }
